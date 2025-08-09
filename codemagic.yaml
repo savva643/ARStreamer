@@ -1,5 +1,26 @@
 workflows:
-    sample-workflow:
-        name: Codemagic Sample Workflow
-        max_build_duration: 120
-        instance_type: mac_mini_m2
+  ios-workflow:
+    name: iOS Build
+    environment:
+      vars:
+        XCODE_WORKSPACE: "YourApp.xcworkspace"  # или .xcodeproj
+        XCODE_SCHEME: "YourAppScheme"
+      xcode: latest
+    scripts:
+      - name: Build IPA
+        script: |
+          xcodebuild archive \
+            -workspace "$XCODE_WORKSPACE" \
+            -scheme "$XCODE_SCHEME" \
+            -archivePath build/YourApp.xcarchive \
+            -allowProvisioningUpdates \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
+          
+          xcodebuild -exportArchive \
+            -archivePath build/YourApp.xcarchive \
+            -exportOptionsPlist exportOptions.plist \
+            -exportPath build
+    artifacts:
+      - build/*.ipa
+      - build/*.xcarchive
