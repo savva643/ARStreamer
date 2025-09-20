@@ -12,7 +12,11 @@
 		F34A7CFF2E47D8D200BAFF4A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F34A7CFE2E47D8D200BAFF4A /* Assets.xcassets */; };
 		F34A7D022E47D8D200BAFF4A /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F34A7D012E47D8D200BAFF4A /* Preview Assets.xcassets */; };
 		F34A7D092E47DA9100BAFF4A /* ARStreamer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A7D082E47DA9100BAFF4A /* ARStreamer.swift */; };
-		F34A7D0B2E47DAC200BAFF4A /* ARPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A7D0A2E47DAC200BAFF4A /* ARPreviewView.swift */; };
+		F34A80012E48000000BAFF4A /* AppEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A80002E48000000BAFF4A /* AppEntry.swift */; };
+		F34A80032E48000000BAFF4A /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A80022E48000000BAFF4A /* MainView.swift */; };
+		F34A80052E48000000BAFF4A /* NetworkConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A80042E48000000BAFF4A /* NetworkConnectView.swift */; };
+		F34A80072E48000000BAFF4A /* NetworkConnectViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A80062E48000000BAFF4A /* NetworkConnectViewModel.swift */; };
+		F34A80092E48000000BAFF4A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34A80082E48000000BAFF4A /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -22,7 +26,11 @@
 		F34A7CFE2E47D8D200BAFF4A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F34A7D012E47D8D200BAFF4A /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		F34A7D082E47DA9100BAFF4A /* ARStreamer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARStreamer.swift; sourceTree = "<group>"; };
-		F34A7D0A2E47DAC200BAFF4A /* ARPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARPreviewView.swift; sourceTree = "<group>"; };
+		F34A80002E48000000BAFF4A /* AppEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEntry.swift; sourceTree = "<group>"; };
+		F34A80022E48000000BAFF4A /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
+		F34A80042E48000000BAFF4A /* NetworkConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkConnectView.swift; sourceTree = "<group>"; };
+		F34A80062E48000000BAFF4A /* NetworkConnectViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkConnectViewModel.swift; sourceTree = "<group>"; };
+		F34A80082E48000000BAFF4A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -57,10 +65,14 @@
 			children = (
 				F34A7CFA2E47D8D000BAFF4A /* ARStreamerApp.swift */,
 				F34A7CFC2E47D8D000BAFF4A /* ContentView.swift */,
+				F34A80002E48000000BAFF4A /* AppEntry.swift */,
+				F34A80022E48000000BAFF4A /* MainView.swift */,
+				F34A80042E48000000BAFF4A /* NetworkConnectView.swift */,
+				F34A80062E48000000BAFF4A /* NetworkConnectViewModel.swift */,
+				F34A80082E48000000BAFF4A /* SettingsView.swift */,
+				F34A7D082E47DA9100BAFF4A /* ARStreamer.swift */,
 				F34A7CFE2E47D8D200BAFF4A /* Assets.xcassets */,
 				F34A7D002E47D8D200BAFF4A /* Preview Content */,
-				F34A7D082E47DA9100BAFF4A /* ARStreamer.swift */,
-				F34A7D0A2E47DAC200BAFF4A /* ARPreviewView.swift */,
 			);
 			path = ARStreamer;
 			sourceTree = "<group>";
@@ -145,8 +157,12 @@
 			files = (
 				F34A7CFD2E47D8D000BAFF4A /* ContentView.swift in Sources */,
 				F34A7CFB2E47D8D000BAFF4A /* ARStreamerApp.swift in Sources */,
-				F34A7D0B2E47DAC200BAFF4A /* ARPreviewView.swift in Sources */,
 				F34A7D092E47DA9100BAFF4A /* ARStreamer.swift in Sources */,
+				F34A80012E48000000BAFF4A /* AppEntry.swift in Sources */,
+				F34A80032E48000000BAFF4A /* MainView.swift in Sources */,
+				F34A80052E48000000BAFF4A /* NetworkConnectView.swift in Sources */,
+				F34A80072E48000000BAFF4A /* NetworkConnectViewModel.swift in Sources */,
+				F34A80092E48000000BAFF4A /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
