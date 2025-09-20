@@ -34,7 +34,7 @@ struct ContentView: View {
             } else {
                 // Экран стрима камеры
                 ARPreviewView(session: streamer.session)
-                    .edgesIgnoringSafeArea(.all)
+                    .ignoresSafeArea()
                 
                 Button(action: {
                     streamer.stopSession()
