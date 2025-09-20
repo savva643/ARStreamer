@@ -1,24 +1,26 @@
 workflows:
-  ios-workflow:
-    name: iOS Build
+  ios-xcode-workflow:
+    name: iOS Build Without Signing
     environment:
       xcode: latest
       vars:
         XCODE_PROJECT: "ARStreamer.xcodeproj"
         XCODE_SCHEME: "ARStreamer"
     scripts:
-      - name: Build IPA
+      - name: Build app
         script: |
-          xcodebuild archive \
+          xcodebuild build \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
-            -archivePath build/ARStreamer.xcarchive \
-            -allowProvisioningUpdates
-          
-          xcodebuild -exportArchive \
-            -archivePath build/ARStreamer.xcarchive \
-            -exportOptionsPlist exportOptions.plist \
-            -exportPath build
+            -configuration Release \
+            -derivedDataPath build
+
+      - name: Package IPA
+        script: |
+          cd build/Build/Products/Release-iphoneos/
+          mkdir -p Payload
+          cp -r ARStreamer.app Payload/
+          zip -r ARStreamer.ipa Payload
+
     artifacts:
-      - build/*.ipa
-      - build/*.xcarchive
+      - build/Build/Products/Release-iphoneos/ARStreamer.ipa
