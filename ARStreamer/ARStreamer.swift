@@ -5,29 +5,22 @@ import UIKit
 import Accelerate
 import Combine
 
-class ARStreamer: NSObject, ObservableObject, ARSessionDelegate {
-    @Published var isConnected = false
-    @Published var deviceIP: String? = nil
-    @Published var port: Int? = nil
+class ARStreamer: NSObject {
+    var connection: NWConnection?
+    var previewCallback: ((UIImage) -> Void)?
+    var session: ARSession
 
-    let session = ARSession()
-    private let connection: NWConnection
-    private let sendRGB: Bool
-    private let sendDepth: Bool
-    private var previewCallback: ((UIImage)->Void)?
-
-    init(connection: NWConnection, previewCallback: ((UIImage)->Void)? = nil) {
+    // Основной инициализатор
+    init(connection: NWConnection?, previewCallback: ((UIImage) -> Void)?) {
         self.connection = connection
-        self.sendRGB = UserDefaults.standard.bool(forKey: "sendRGB")
-        self.sendDepth = UserDefaults.standard.bool(forKey: "sendDepth")
         self.previewCallback = previewCallback
+        self.session = ARSession()
         super.init()
     }
-    
-    // временный инициализатор без connection для SwiftUI preview / тестов
-    convenience init() {
-        let dummyConnection = NWConnection(to: .hostPort(host: "127.0.0.1", port: 1234), using: .tcp)
-        self.init(connection: dummyConnection)
+
+    // Удобный конструктор без параметров
+    override convenience init() {
+        self.init(connection: nil, previewCallback: nil)
     }
     
     func startSession() {
