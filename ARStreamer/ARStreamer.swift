@@ -5,22 +5,23 @@ import UIKit
 import Accelerate
 import Combine
 
-class ARStreamer: NSObject, ARSessionDelegate, ObservableObject {
-    @Published var session = ARSession()
-    @Published var isConnected: Bool = false
-    
+class ARStreamer: NSObject, ObservableObject, ARSessionDelegate {
+    @Published var isConnected = false
+    @Published var deviceIP: String? = nil
+    @Published var port: Int? = nil
+
+    let session = ARSession()
     private let connection: NWConnection
     private let sendRGB: Bool
     private let sendDepth: Bool
     private var previewCallback: ((UIImage)->Void)?
-    
+
     init(connection: NWConnection, previewCallback: ((UIImage)->Void)? = nil) {
         self.connection = connection
         self.sendRGB = UserDefaults.standard.bool(forKey: "sendRGB")
         self.sendDepth = UserDefaults.standard.bool(forKey: "sendDepth")
         self.previewCallback = previewCallback
         super.init()
-        self.session.delegate = self
     }
     
     // временный инициализатор без connection для SwiftUI preview / тестов
