@@ -37,14 +37,13 @@ class NetworkConnectViewModel: ObservableObject {
     }
     
     func start(mode: ConnectMode) {
-        // В MVP iPhone выступает как клиент: он подключается к серверу по заданному адресу.
-        // Для реального сценария ПК будет сервером; здесь мы попытаемся подключиться на известный хост (в development можно ввести IP)
-        // Для простоты — подключимся к предварительно захардкоженному адресу 192.168.1.100:9000
-        let host = NWEndpoint.Host("192.168.1.100") // <- поменяй на IP твоего ПК
+        // Пример подключения к серверу
+        let host = NWEndpoint.Host("192.168.1.100") // <- IP ПК
         let port = NWEndpoint.Port(integerLiteral: 9000)
         let params = NWParameters.tcp
         connection = NWConnection(host: host, port: port, using: params)
         statusText = "Connecting..."
+        
         connection?.stateUpdateHandler = { [weak self] newState in
             DispatchQueue.main.async {
                 switch newState {
@@ -52,9 +51,10 @@ class NetworkConnectViewModel: ObservableObject {
                         self?.statusText = "Connected"
                         self?.startStreaming()
                     case .failed(let err):
+                        // NWError не optional, можно напрямую
                         self?.statusText = "Failed: \(err.localizedDescription)"
                     case .waiting(let err):
-                        self?.statusText = "Waiting: \(err?.localizedDescription ?? "")"
+                        self?.statusText = "Waiting: \(err.localizedDescription)"
                     default:
                         break
                 }
