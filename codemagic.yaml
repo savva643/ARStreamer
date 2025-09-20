@@ -3,8 +3,8 @@ workflows:
     name: iOS Build
     environment:
       vars:
-        XCODE_WORKSPACE: "YourApp.xcworkspace"  # или .xcodeproj
-        XCODE_SCHEME: "YourAppScheme"
+        XCODE_WORKSPACE: "ARStreamer.xcodeproj"  # или .xcodeproj
+        XCODE_SCHEME: "ARStreamer"
       xcode: latest
     scripts:
       - name: Build IPA
