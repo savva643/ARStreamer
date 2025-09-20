@@ -2,20 +2,18 @@ workflows:
   ios-workflow:
     name: iOS Build
     environment:
-      vars:
-        XCODE_WORKSPACE: "ARStreamer.xcodeproj"  # или .xcodeproj
-        XCODE_SCHEME: "ARStreamer"
       xcode: latest
+      vars:
+        XCODE_PROJECT: "ARStreamer.xcodeproj"
+        XCODE_SCHEME: "ARStreamer"
     scripts:
       - name: Build IPA
         script: |
           xcodebuild archive \
-            -workspace "$XCODE_WORKSPACE" \
+            -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
             -archivePath build/ARStreamer.xcarchive \
-            -allowProvisioningUpdates \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO
+            -allowProvisioningUpdates
           
           xcodebuild -exportArchive \
             -archivePath build/ARStreamer.xcarchive \
