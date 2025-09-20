@@ -1,83 +1,109 @@
-import Foundation
 import ARKit
 import Network
-import SwiftUI
+import UIKit
+import Accelerate
 
-class ARStreamer: NSObject, ObservableObject, ARSessionDelegate {
-    @Published var isStreaming = false
-    @Published var deviceIP: String?
-    let port: UInt16 = 5555
+class ARStreamer: NSObject, ARSessionDelegate {
+    private let session = ARSession()
+    private let connection: NWConnection
+    private let sendRGB: Bool
+    private let sendDepth: Bool
+    private var previewCallback: ((UIImage)->Void)?
     
-    let session = ARSession()
-    private var connection: NWConnection?
-    
-    override init() {
+    init(connection: NWConnection, previewCallback: ((UIImage)->Void)? = nil) {
+        self.connection = connection
+        self.sendRGB = UserDefaults.standard.bool(forKey: "sendRGB")
+        self.sendDepth = UserDefaults.standard.bool(forKey: "sendDepth")
+        self.previewCallback = previewCallback
         super.init()
-        session.delegate = self
-        deviceIP = getWiFiAddress()
     }
     
-    func start() {
-        guard let host = deviceIP else { return }
-        
-        // Настройка UDP
-        connection = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!, using: .udp)
-        connection?.start(queue: .global())
-        
-        // Настройка ARKit
+    func startSession() {
         let config = ARWorldTrackingConfiguration()
-        config.frameSemantics = .sceneDepth
-        config.environmentTexturing = .automatic
-        session.run(config)
-        
-        DispatchQueue.main.async {
-            self.isStreaming = true
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+            config.frameSemantics.insert(.sceneDepth)
         }
+        session.delegate = self
+        session.run(config)
     }
     
-    func stop() {
+    func stopSession() {
         session.pause()
-        connection?.cancel()
-        
-        DispatchQueue.main.async {
-            self.isStreaming = false
-        }
+    }
+    
+    // framing: [magic 4b 'ARST'][1b type][4b length][data]
+    func sendPacket(type: UInt8, data: Data) {
+        var packet = Data()
+        packet.append(contentsOf: [0x41,0x52,0x53,0x54]) // 'ARST'
+        packet.append(type)
+        var len = UInt32(data.count).bigEndian
+        packet.append(Data(bytes: &len, count: 4))
+        packet.append(data)
+        connection.send(content: packet, completion: .contentProcessed({ err in
+            if let e = err { print("send err:", e) }
+        }))
     }
     
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        let pixelBuffer = frame.capturedImage
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let context = CIContext()
-        
-        if let jpegData = context.jpegRepresentation(of: ciImage, colorSpace: CGColorSpaceCreateDeviceRGB(), options: [:]) {
-            connection?.send(content: jpegData, completion: .contentProcessed { _ in })
+        // RGB
+        if sendRGB {
+            let ciImage = CIImage(cvPixelBuffer: frame.capturedImage)
+            let context = CIContext()
+            if let cg = context.createCGImage(ciImage, from: ciImage.extent) {
+                let ui = UIImage(cgImage: cg, scale: 1.0, orientation: .right) // may need orientation fix
+                if let jpeg = ui.jpegData(compressionQuality: 0.6) {
+                    sendPacket(type: 0x01, data: jpeg)
+                    previewCallback?(ui) // show local preview
+                }
+            }
+        }
+        // Depth
+        if sendDepth, let sd = frame.sceneDepth {
+            let depthBuffer = sd.depthMap
+            if let depthPNG = depthBufferToPNG(depthBuffer) {
+                sendPacket(type: 0x02, data: depthPNG)
+            }
         }
     }
     
-    private func getWiFiAddress() -> String? {
-        var address : String?
-        var ifaddr : UnsafeMutablePointer<ifaddrs>? = nil
-        
-        if getifaddrs(&ifaddr) == 0 {
-            var ptr = ifaddr
-            while ptr != nil {
-                defer { ptr = ptr?.pointee.ifa_next }
-                
-                let interface = ptr?.pointee
-                let addrFamily = interface?.ifa_addr.pointee.sa_family
-                if addrFamily == UInt8(AF_INET) {
-                    if let name = String(validatingUTF8: (interface?.ifa_name)!), name == "en0" {
-                        var addr = interface?.ifa_addr.pointee
-                        var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                        getnameinfo(&addr!, socklen_t(interface!.ifa_addr.pointee.sa_len),
-                                    &hostname, socklen_t(hostname.count),
-                                    nil, socklen_t(0), NI_NUMERICHOST)
-                        address = String(cString: hostname)
-                    }
-                }
-            }
-            freeifaddrs(ifaddr)
+    func depthBufferToPNG(_ buffer: CVPixelBuffer) -> Data? {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let base = CVPixelBufferGetBaseAddress(buffer)!
+        // buffer float32 per pixel
+        let count = width*height
+        let floatPtr = base.assumingMemoryBound(to: Float32.self)
+        // Convert float32 to 16-bit unsigned by scaling (clamp)
+        var maxVal: Float32 = 0
+        for i in 0..<count { maxVal = max(maxVal, floatPtr[i]) }
+        let scale: Float32 = maxVal > 0 ? (Float32(UInt16.max) / maxVal) : 1.0
+        let uint16Ptr = UnsafeMutablePointer<UInt16>.allocate(capacity: count)
+        for i in 0..<count {
+            let v = floatPtr[i]*scale
+            let vv = UInt16(min(max(v, 0), Float32(UInt16.max)))
+            uint16Ptr[i] = vv.bigEndian
         }
-        return address
+        // create CGImage / PNG from raw 16-bit grayscale
+        let provider = CGDataProvider(dataInfo: nil, data: uint16Ptr, size: count*MemoryLayout<UInt16>.size) { _, data, _ in
+            data.deallocate()
+        }
+        let cg = CGImage(width: width,
+                         height: height,
+                         bitsPerComponent: 16,
+                         bitsPerPixel: 16,
+                         bytesPerRow: width*2,
+                         space: CGColorSpaceCreateDeviceGray(),
+                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                         provider: provider!,
+                         decode: nil,
+                         shouldInterpolate: false,
+                         intent: .defaultIntent)
+        if let cg = cg {
+            let ui = UIImage(cgImage: cg)
+            return ui.pngData()
+        }
+        return nil
     }
 }
