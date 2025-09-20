@@ -1,10 +1,14 @@
+import SwiftUI
 import ARKit
 import Network
 import UIKit
 import Accelerate
+import Combine
 
-class ARStreamer: NSObject, ARSessionDelegate {
-    private let session = ARSession()
+class ARStreamer: NSObject, ARSessionDelegate, ObservableObject {
+    @Published var session = ARSession()
+    @Published var isConnected: Bool = false
+    
     private let connection: NWConnection
     private let sendRGB: Bool
     private let sendDepth: Bool
@@ -16,6 +20,13 @@ class ARStreamer: NSObject, ARSessionDelegate {
         self.sendDepth = UserDefaults.standard.bool(forKey: "sendDepth")
         self.previewCallback = previewCallback
         super.init()
+        self.session.delegate = self
+    }
+    
+    // временный инициализатор без connection для SwiftUI preview / тестов
+    convenience init() {
+        let dummyConnection = NWConnection(to: .hostPort(host: "127.0.0.1", port: 1234), using: .tcp)
+        self.init(connection: dummyConnection)
     }
     
     func startSession() {
@@ -23,7 +34,6 @@ class ARStreamer: NSObject, ARSessionDelegate {
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
             config.frameSemantics.insert(.sceneDepth)
         }
-        session.delegate = self
         session.run(config)
     }
     
@@ -31,7 +41,6 @@ class ARStreamer: NSObject, ARSessionDelegate {
         session.pause()
     }
     
-    // framing: [magic 4b 'ARST'][1b type][4b length][data]
     func sendPacket(type: UInt8, data: Data) {
         var packet = Data()
         packet.append(contentsOf: [0x41,0x52,0x53,0x54]) // 'ARST'
@@ -45,19 +54,18 @@ class ARStreamer: NSObject, ARSessionDelegate {
     }
     
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        // RGB
         if sendRGB {
             let ciImage = CIImage(cvPixelBuffer: frame.capturedImage)
             let context = CIContext()
             if let cg = context.createCGImage(ciImage, from: ciImage.extent) {
-                let ui = UIImage(cgImage: cg, scale: 1.0, orientation: .right) // may need orientation fix
+                let ui = UIImage(cgImage: cg, scale: 1.0, orientation: .right)
                 if let jpeg = ui.jpegData(compressionQuality: 0.6) {
                     sendPacket(type: 0x01, data: jpeg)
-                    previewCallback?(ui) // show local preview
+                    previewCallback?(ui)
                 }
             }
         }
-        // Depth
+        
         if sendDepth, let sd = frame.sceneDepth {
             let depthBuffer = sd.depthMap
             if let depthPNG = depthBufferToPNG(depthBuffer) {
@@ -72,10 +80,8 @@ class ARStreamer: NSObject, ARSessionDelegate {
         let width = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
         let base = CVPixelBufferGetBaseAddress(buffer)!
-        // buffer float32 per pixel
         let count = width*height
         let floatPtr = base.assumingMemoryBound(to: Float32.self)
-        // Convert float32 to 16-bit unsigned by scaling (clamp)
         var maxVal: Float32 = 0
         for i in 0..<count { maxVal = max(maxVal, floatPtr[i]) }
         let scale: Float32 = maxVal > 0 ? (Float32(UInt16.max) / maxVal) : 1.0
@@ -85,7 +91,6 @@ class ARStreamer: NSObject, ARSessionDelegate {
             let vv = UInt16(min(max(v, 0), Float32(UInt16.max)))
             uint16Ptr[i] = vv.bigEndian
         }
-        // create CGImage / PNG from raw 16-bit grayscale
         let provider = CGDataProvider(dataInfo: nil, data: uint16Ptr, size: count*MemoryLayout<UInt16>.size) { _, data, _ in
             data.deallocate()
         }
