@@ -1,14 +1,12 @@
 import SwiftUI
 import ARKit
-import Network
-import Combine
 
 struct ContentView: View {
     @StateObject private var streamer = ARStreamer()
     
     var body: some View {
         VStack {
-            if !streamer.isStreaming {
+            if !streamer.isConnected {
                 // Экран подключения
                 Text("ARStreamer")
                     .font(.largeTitle)
@@ -16,7 +14,8 @@ struct ContentView: View {
                     .padding(.bottom, 20)
                 
                 Button(action: {
-                    streamer.start()
+                    streamer.startSession()
+                    streamer.isConnected = true // отметим, что стрим начался
                 }) {
                     Text("Подключить")
                         .font(.title2)
@@ -28,8 +27,8 @@ struct ContentView: View {
                 }
                 .padding()
                 
-                if let ip = streamer.deviceIP {
-                    Text("IP: \(ip)  Порт: \(streamer.port)")
+                if let ip = streamer.deviceIP, let port = streamer.port {
+                    Text("IP: \(ip)  Порт: \(port)")
                         .padding(.top, 10)
                 }
             } else {
@@ -38,7 +37,8 @@ struct ContentView: View {
                     .edgesIgnoringSafeArea(.all)
                 
                 Button(action: {
-                    streamer.stop()
+                    streamer.stopSession()
+                    streamer.isConnected = false
                 }) {
                     Text("Отключиться")
                         .font(.title2)
