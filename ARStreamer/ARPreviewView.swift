@@ -2,12 +2,11 @@ import SwiftUI
 import ARKit
 
 struct ARPreviewView: UIViewRepresentable {
-    let session: ARSession
+    var session: ARSession
 
     func makeUIView(context: Context) -> ARSCNView {
         let view = ARSCNView()
         view.session = session
-        view.automaticallyUpdatesLighting = true
         return view
     }
 
