@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Разрешение на подключение к локальной сети -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>ARStreamer needs access to the local network to send video to your PC.</string>
+
+    <!-- Бонжур для автоматического обнаружения (опционально) -->
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_arstreamer._tcp</string>
+        <string>_arstreamer._udp</string>
+    </array>
+
+    <!-- App Transport Security -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+        <!-- Для iOS 14+ можно добавить -->
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+    
+    <!-- Камера -->
+    <key>NSCameraUsageDescription</key>
+    <string>Приложение использует камеру для передачи видео на ПК</string>
+
+    <!-- Микрофон (если нужен) -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Приложение использует микрофон для передачи звука (если включено)</string>
+
+    <!-- 🔹 ДЛЯ USB: Требования MFi -->
+    <key>UISupportedExternalAccessoryProtocols</key>
+    <array>
+        <string>com.apple.mfi</string>
+        <string>com.apple.iphone.earpods</string>
+    </array>
+
+</dict>
+</plist>
