@@ -78,9 +78,11 @@ class LiDARDepthManager: NSObject {
                 session.addOutput(videoOut)
             }
             
-            if device.activeFormat.isDepthDataFormatSupported {
+            // Check if depth is supported by looking at supported depth formats
+            if !device.activeFormat.supportedDepthDataFormats.isEmpty {
                 depthOutput = AVCaptureDepthDataOutput()
                 depthOutput?.isFilteringEnabled = true
+                depthOutput?.alwaysDiscardsLateDepthData = true
                 if let depthOut = depthOutput, session.canAddOutput(depthOut) {
                     session.addOutput(depthOut)
                 }
