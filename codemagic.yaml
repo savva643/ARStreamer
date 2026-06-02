@@ -12,6 +12,7 @@ workflows:
           xcode-project build-ipa \
             --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
+            --export-options-plist ./export_options.plist \
             --archive-xcargs "CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO"
     artifacts:
-      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.ipa
+      - build/ios/ipa/*.ipa
