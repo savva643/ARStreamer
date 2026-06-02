@@ -1,0 +1,17 @@
+workflows:
+  build-unsigned-ipa:
+    name: Build unsigned iOS IPA
+    environment:
+      vars:
+        XCODE_PROJECT: "ARStreamer.xcodeproj"
+        XCODE_SCHEME: "ARStreamer"
+      xcode: latest
+    scripts:
+      - name: Build unsigned .ipa
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME" \
+            --archive-xcargs "CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO"
+    artifacts:
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.ipa
