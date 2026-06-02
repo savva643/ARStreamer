@@ -7,12 +7,29 @@ workflows:
         XCODE_SCHEME: "ARStreamer"
       xcode: latest
     scripts:
-      - name: Build unsigned .ipa
+      - name: Build .app without signing
         script: |
-          xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME" \
-            --export-options-plist ./export_options.plist \
-            --archive-xcargs "CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO"
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath ./build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Package .app into .ipa
+        script: |
+          # Находим собранный .app
+          APP_PATH=$(find ./build -name "ARStreamer.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ .app not found"
+            exit 1
+          fi
+          echo "✅ Found .app at: $APP_PATH"
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          zip -r ARStreamer.ipa Payload
+          ls -lh ARStreamer.ipa
     artifacts:
-      - build/ios/ipa/*.ipa
+      - ARStreamer.ipa
