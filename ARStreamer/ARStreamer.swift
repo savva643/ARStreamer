@@ -55,27 +55,41 @@ class LiDARDepthManager: NSObject {
     var videoDataCallback: ((CVPixelBuffer) -> Void)?
     
     func startSession() {
+        print("🎥 LiDARDepthManager.startSession() called")
         captureSession = AVCaptureSession()
-        guard let session = captureSession else { return }
+        guard let session = captureSession else { 
+            print("❌ Failed to create AVCaptureSession")
+            return 
+        }
         session.beginConfiguration()
         session.sessionPreset = .inputPriority
         
         guard let device = AVCaptureDevice.default(.builtInLiDARDepthCamera, for: .video, position: .back) ??
                          AVCaptureDevice.default(.builtInDualCamera, for: .video, position: .back) ??
                          AVCaptureDevice.default(for: .video) else {
-            print("Camera not available")
+            print("❌ Camera not available")
             return
         }
         
+        print("✅ Camera device found: \(device.localizedName)")
+        
         do {
             let input = try AVCaptureDeviceInput(device: device)
-            if session.canAddInput(input) { session.addInput(input) }
+            if session.canAddInput(input) { 
+                session.addInput(input)
+                print("✅ Camera input added")
+            } else {
+                print("❌ Cannot add camera input")
+            }
             
             videoOutput = AVCaptureVideoDataOutput()
             videoOutput?.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
             videoOutput?.alwaysDiscardsLateVideoFrames = true
             if let videoOut = videoOutput, session.canAddOutput(videoOut) {
                 session.addOutput(videoOut)
+                print("✅ Video output added")
+            } else {
+                print("❌ Cannot add video output")
             }
             
             // Check if depth is supported by looking at supported depth formats
@@ -85,20 +99,32 @@ class LiDARDepthManager: NSObject {
                 depthOutput?.alwaysDiscardsLateDepthData = true
                 if let depthOut = depthOutput, session.canAddOutput(depthOut) {
                     session.addOutput(depthOut)
+                    print("✅ Depth output added (LiDAR supported)")
+                } else {
+                    print("⚠️ Cannot add depth output")
                 }
+            } else {
+                print("⚠️ Depth not supported by this device")
             }
             
             try device.lockForConfiguration()
             if device.isFocusModeSupported(.continuousAutoFocus) {
                 device.focusMode = .continuousAutoFocus
+                print("✅ Continuous autofocus enabled")
             }
             device.unlockForConfiguration()
             
             session.commitConfiguration()
-            DispatchQueue.global(qos: .userInitiated).async { session.startRunning() }
-            print("Camera session started (LiDAR: \(depthOutput != nil))")
+            print("✅ Session configuration committed")
+            
+            // 🔹 ВАЖНО: запускаем сессию синхронно чтобы убедиться что она запустилась
+            DispatchQueue.global(qos: .userInitiated).async { 
+                session.startRunning()
+                print("✅ Camera session running")
+            }
+            print("🎥 Camera session started (LiDAR: \(depthOutput != nil))")
         } catch {
-            print("Camera init error: \(error)")
+            print("❌ Camera init error: \(error)")
         }
     }
     
@@ -108,11 +134,21 @@ class LiDARDepthManager: NSObject {
     }
     
     func setVideoDelegate(_ delegate: AVCaptureVideoDataOutputSampleBufferDelegate, queue: DispatchQueue) {
-        videoOutput?.setSampleBufferDelegate(delegate, queue: queue)
+        if videoOutput != nil {
+            videoOutput?.setSampleBufferDelegate(delegate, queue: queue)
+            print("✅ Video delegate set")
+        } else {
+            print("❌ Cannot set video delegate - videoOutput is nil")
+        }
     }
     
     func setDepthDelegate(_ delegate: AVCaptureDepthDataOutputDelegate, queue: DispatchQueue) {
-        depthOutput?.setDelegate(delegate, callbackQueue: queue)
+        if depthOutput != nil {
+            depthOutput?.setDelegate(delegate, callbackQueue: queue)
+            print("✅ Depth delegate set")
+        } else {
+            print("⚠️ Cannot set depth delegate - depthOutput is nil")
+        }
     }
 }
 
@@ -491,13 +527,19 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     
     // MARK: - Video Frame Processing
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { 
+            print("❌ captureOutput: no pixelBuffer")
+            return 
+        }
         
         let now = Date().timeIntervalSince1970
         guard now - lastSentTime >= frameInterval else { return }
         lastSentTime = now
         
-        guard let uiImage = imageFromPixelBuffer(pixelBuffer) else { return }
+        guard let uiImage = imageFromPixelBuffer(pixelBuffer) else { 
+            print("❌ captureOutput: failed to create UIImage")
+            return 
+        }
         
         frameSequence += 1
         frameTimestamps[frameSequence] = now
@@ -508,6 +550,11 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         if let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) {
             let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
             cameraData.imageResolution = CGSize(width: CGFloat(dimensions.width), height: CGFloat(dimensions.height))
+        }
+        
+        // 🔹 ЛОГИРОВАНИЕ ВИДЕО ФРЕЙМОВ
+        if frameSequence % 30 == 0 {
+            print("📹 Video frame #\(frameSequence): \(cameraData.imageResolution) @ \(Int(1.0/frameInterval)) FPS")
         }
         
         // Send sensor data synchronized with frame
@@ -547,6 +594,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     
     // MARK: - Frame Processing
     private func processFrame(_ pixelBuffer: CVPixelBuffer, uiImage: UIImage, depthImage: UIImage?, frameSequence: UInt64) {
+        print("🎬 processFrame called: frameSequence=\(frameSequence), streamMode=\(streamMode)")
         switch streamMode {
         case "TCP_JPEG":
             sendTCPJPEG(uiImage, frameSequence: frameSequence)
@@ -614,8 +662,18 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     }
     
     private func sendUSBFrame(_ image: UIImage, frameSequence: UInt64) {
-        guard let usbManager = usbManager, usbManager.isConnected else { return }
-        guard let jpegData = image.jpegData(compressionQuality: usbCompressionQuality) else { return }
+        guard let usbManager = usbManager else {
+            print("❌ sendUSBFrame: usbManager is nil")
+            return
+        }
+        guard usbManager.isConnected else {
+            print("❌ sendUSBFrame: usbManager not connected")
+            return
+        }
+        guard let jpegData = image.jpegData(compressionQuality: usbCompressionQuality) else {
+            print("❌ sendUSBFrame: failed to create JPEG data")
+            return
+        }
         
         var dataType: UInt8 = 0x01
         var sequenceBigEndian = frameSequence.bigEndian
@@ -626,7 +684,9 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
                         Data(bytes: &frameSize, count: 4)
         let packetData = headerData + jpegData
         
+        print("📤 sendUSBFrame: frameSequence=\(frameSequence), jpegSize=\(jpegData.count), totalSize=\(packetData.count)")
         usbManager.sendData(packetData)
+        bytesSent += packetData.count
     }
     
     // MARK: - Image Processing
@@ -703,13 +763,27 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     
     // MARK: - Streaming Control
     @MainActor func startStreaming() {
+        print("🎬 startStreaming called with streamMode: \(streamMode), useLiDAR: \(useLiDAR)")
+        
         lidarManager = LiDARDepthManager()
         lidarManager?.setVideoDelegate(self, queue: .global(qos: .userInitiated))
         if useLiDAR {
             lidarManager?.setDepthDelegate(self, queue: .global(qos: .userInitiated))
+            print("🎬 LiDAR depth delegate set")
         }
         lidarManager?.startSession()
-        print("Streaming started (LiDAR: \(useLiDAR))")
+        
+        // 🔹 ДОБАВЛЯЕМ ЛОГИРОВАНИЕ О СОСТОЯНИИ КАМЕРЫ
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            print("🎬 Camera session check after 1 second:")
+            print("   - lidarManager: \(self.lidarManager != nil)")
+            print("   - streamMode: \(self.streamMode)")
+            print("   - useLiDAR: \(self.useLiDAR)")
+            print("   - frameCount: \(self.frameCount)")
+            print("   - bytesSent: \(self.bytesSent)")
+        }
+        
+        print("🎬 Streaming started (LiDAR: \(useLiDAR), Mode: \(streamMode))")
     }
     
     func stopStreaming() {
