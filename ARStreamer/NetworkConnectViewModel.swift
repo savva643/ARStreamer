@@ -165,6 +165,9 @@ class NetworkConnectViewModel: ObservableObject {
 
     // MARK: - Запуск стриминга
     private func startStreaming() {
+        print("🎬 startStreaming() called with streamMode=\(streamMode)")
+        statusText = "🎬 Инициализация камеры..."
+        
         // 🔹 ИСПРАВЛЕНИЕ: для USB создаем фиктивное соединение
         let effectiveConnection: NWConnection
         
@@ -176,6 +179,7 @@ class NetworkConnectViewModel: ObservableObject {
         } else {
             guard let connection = connection else {
                 print("❌ Нет соединения для сетевого режима")
+                statusText = "❌ Ошибка: нет соединения"
                 return
             }
             effectiveConnection = connection
@@ -185,6 +189,9 @@ class NetworkConnectViewModel: ObservableObject {
         
         // 🔹 СИНХРОНИЗИРУЕМ LiDAR С НАСТРОЙКАМИ
         let shouldUseLiDAR = self.sendDepth
+        
+        print("🎬 Creating ARStreamer: useLiDAR=\(shouldUseLiDAR), fps=\(fps)")
+        statusText = "🎬 Создание ARStreamer..."
         
         // 🔹 ИСПРАВИЛ: правильный callback с двумя изображениями
         arStreamer = ARStreamer(
@@ -198,6 +205,7 @@ class NetworkConnectViewModel: ObservableObject {
                 Task { @MainActor in
                     self?.previewImage = rgbImage
                     self?.depthPreviewImage = depthImage
+                    self?.statusText = "📹 Видео: \(Int(rgbImage.size.width))x\(Int(rgbImage.size.height))"
                 }
             },
             fpsCallback: { [weak self] fps, bytes in
@@ -209,8 +217,14 @@ class NetworkConnectViewModel: ObservableObject {
             usbManager: streamMode.uppercased() == "USB" ? usbManager : nil
         )
         
+        print("🎬 ARStreamer created, calling startStreaming()")
+        statusText = "🎬 Запуск камеры..."
+        
         // 🔹 ВАЖНО: для USB сразу запускаем AR сессию
         arStreamer?.startStreaming()
+        
+        print("🎬 startStreaming() completed")
+        statusText = "⏳ Ожидание видео от камеры..."
     }
 
     func switchDisplayMode(_ mode: ARStreamer.DisplayMode) {

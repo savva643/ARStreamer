@@ -248,7 +248,34 @@ struct ContentView: View {
                     .scaledToFill()
                     .ignoresSafeArea()
             } else {
-                Color.black.ignoresSafeArea()
+                // 🔹 ОТЛАДКА: показываем статус если нет изображения
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    
+                    VStack(spacing: 20) {
+                        Text("Ожидание видео...")
+                            .font(.title2)
+                            .foregroundColor(.white)
+                        
+                        ProgressView()
+                            .tint(.white)
+                        
+                        Text("Статус: \(viewModel.statusText)")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .multilineTextAlignment(.center)
+                            .padding()
+                        
+                        Text("FPS: \(viewModel.fpsText)")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
+                        Text("Скорость: \(viewModel.networkSpeedText)")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    .padding()
+                }
             }
 
             // 🔹 Временный текст режима (по центру сверху с учетом безопасных областей)
