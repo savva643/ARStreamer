@@ -120,6 +120,17 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
 
+                // MARK: - Логи
+                Section(header: Text("📋 Логи")) {
+                    NavigationLink(destination: LogsView()) {
+                        HStack {
+                            Image(systemName: "doc.text")
+                                .foregroundColor(.blue)
+                            Text("Просмотреть логи")
+                        }
+                    }
+                }
+                
                 // MARK: - Инструкция для USB
                 if streamMode == "USB" {
                     Section(header: Text("📋 Инструкция для USB-подключения")) {

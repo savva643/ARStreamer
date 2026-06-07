@@ -3,6 +3,33 @@ import Network
 import SwiftUI
 import Combine
 
+// 🔹 ЛОГИРОВАНИЕ В ФАЙЛ
+func logToFile(_ message: String) {
+    let dateFormatter = DateFormatter()
+    dateFormatter.dateFormat = "HH:mm:ss.SSS"
+    let timestamp = dateFormatter.string(from: Date())
+    let logMessage = "[\(timestamp)] \(message)\n"
+    
+    if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+        let logFilePath = documentsPath.appendingPathComponent("ARStreamer.log")
+        
+        if FileManager.default.fileExists(atPath: logFilePath.path) {
+            if let fileHandle = FileHandle(forWritingAtPath: logFilePath.path) {
+                fileHandle.seekToEndOfFile()
+                if let data = logMessage.data(using: .utf8) {
+                    fileHandle.write(data)
+                }
+                fileHandle.closeFile()
+            }
+        } else {
+            try? logMessage.write(toFile: logFilePath.path, atomically: true, encoding: .utf8)
+        }
+    }
+    
+    // Также выводим в консоль
+    print(message)
+}
+
 @MainActor
 class NetworkConnectViewModel: ObservableObject {
     @Published var localIP: String? = nil
@@ -165,20 +192,22 @@ class NetworkConnectViewModel: ObservableObject {
 
     // MARK: - Запуск стриминга
     private func startStreaming() {
-        print("🎬 startStreaming() called with streamMode=\(streamMode)")
+        logToFile("🎬 startStreaming() called with streamMode=\(streamMode)")
         statusText = "🎬 Инициализация камеры..."
+        logToFile("statusText set to: 🎬 Инициализация камеры...")
         
         // 🔹 ИСПРАВЛЕНИЕ: для USB создаем фиктивное соединение
         let effectiveConnection: NWConnection
         
         if streamMode.uppercased() == "USB" {
+            logToFile("Creating dummy connection for USB mode")
             // Создаем фиктивное соединение для USB (оно не будет использоваться)
             let host = NWEndpoint.Host("127.0.0.1")
             let port = NWEndpoint.Port(integerLiteral: 1)
             effectiveConnection = NWConnection(host: host, port: port, using: .tcp)
         } else {
             guard let connection = connection else {
-                print("❌ Нет соединения для сетевого режима")
+                logToFile("❌ No connection for network mode")
                 statusText = "❌ Ошибка: нет соединения"
                 return
             }
@@ -190,8 +219,9 @@ class NetworkConnectViewModel: ObservableObject {
         // 🔹 СИНХРОНИЗИРУЕМ LiDAR С НАСТРОЙКАМИ
         let shouldUseLiDAR = self.sendDepth
         
-        print("🎬 Creating ARStreamer: useLiDAR=\(shouldUseLiDAR), fps=\(fps)")
+        logToFile("🎬 Creating ARStreamer: useLiDAR=\(shouldUseLiDAR), fps=\(fps)")
         statusText = "🎬 Создание ARStreamer..."
+        logToFile("statusText set to: 🎬 Создание ARStreamer...")
         
         // 🔹 ИСПРАВИЛ: правильный callback с двумя изображениями
         arStreamer = ARStreamer(
@@ -201,11 +231,15 @@ class NetworkConnectViewModel: ObservableObject {
             compressionQuality: 0.8,
             targetFPS: fps,
             previewCallback: { [weak self] rgbImage, depthImage in
-                print("📸 previewCallback (startStreaming): rgbImage=\(rgbImage.size), depthImage=\(depthImage?.size ?? .zero)")
+                let msg = "📸 previewCallback: rgbImage=\(rgbImage.size), depthImage=\(depthImage?.size ?? .zero)"
+                logToFile(msg)
                 Task { @MainActor in
+                    logToFile("📸 Setting previewImage on MainActor: \(rgbImage.size)")
                     self?.previewImage = rgbImage
+                    logToFile("✅ previewImage set: \(self?.previewImage?.size ?? .zero)")
                     self?.depthPreviewImage = depthImage
                     self?.statusText = "📹 Видео: \(Int(rgbImage.size.width))x\(Int(rgbImage.size.height))"
+                    logToFile("✅ statusText updated: \(self?.statusText ?? "nil")")
                 }
             },
             fpsCallback: { [weak self] fps, bytes in
@@ -217,14 +251,18 @@ class NetworkConnectViewModel: ObservableObject {
             usbManager: streamMode.uppercased() == "USB" ? usbManager : nil
         )
         
-        print("🎬 ARStreamer created, calling startStreaming()")
+        logToFile("🎬 ARStreamer created, calling startStreaming()")
         statusText = "🎬 Запуск камеры..."
+        logToFile("statusText set to: 🎬 Запуск камеры...")
         
         // 🔹 ВАЖНО: для USB сразу запускаем AR сессию
+        logToFile("Calling arStreamer?.startStreaming()")
         arStreamer?.startStreaming()
+        logToFile("✅ arStreamer?.startStreaming() completed")
         
-        print("🎬 startStreaming() completed")
+        logToFile("🎬 startStreaming() completed")
         statusText = "⏳ Ожидание видео от камеры..."
+        logToFile("statusText set to: ⏳ Ожидание видео от камеры...")
     }
 
     func switchDisplayMode(_ mode: ARStreamer.DisplayMode) {

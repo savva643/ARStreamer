@@ -7,6 +7,33 @@ import CoreMedia
 import CoreMotion
 import CoreVideo
 
+// 🔹 ЛОГИРОВАНИЕ В ФАЙЛ (из NetworkConnectViewModel)
+func logToFile(_ message: String) {
+    let dateFormatter = DateFormatter()
+    dateFormatter.dateFormat = "HH:mm:ss.SSS"
+    let timestamp = dateFormatter.string(from: Date())
+    let logMessage = "[\(timestamp)] \(message)\n"
+    
+    if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+        let logFilePath = documentsPath.appendingPathComponent("ARStreamer.log")
+        
+        if FileManager.default.fileExists(atPath: logFilePath.path) {
+            if let fileHandle = FileHandle(forWritingAtPath: logFilePath.path) {
+                fileHandle.seekToEndOfFile()
+                if let data = logMessage.data(using: .utf8) {
+                    fileHandle.write(data)
+                }
+                fileHandle.closeFile()
+            }
+        } else {
+            try? logMessage.write(toFile: logFilePath.path, atomically: true, encoding: .utf8)
+        }
+    }
+    
+    // Также выводим в консоль
+    print(message)
+}
+
 // MARK: - Extensions
 extension CMDeviceMotion {
     var eulerAngles: (pitch: Double, yaw: Double, roll: Double) {
@@ -55,76 +82,95 @@ class LiDARDepthManager: NSObject {
     var videoDataCallback: ((CVPixelBuffer) -> Void)?
     
     func startSession() {
-        print("🎥 LiDARDepthManager.startSession() called")
+        logToFile("🎥 LiDARDepthManager.startSession() called")
         captureSession = AVCaptureSession()
         guard let session = captureSession else { 
-            print("❌ Failed to create AVCaptureSession")
+            logToFile("❌ Failed to create AVCaptureSession")
             return 
         }
+        logToFile("✅ AVCaptureSession created")
+        
         session.beginConfiguration()
         session.sessionPreset = .inputPriority
+        logToFile("✅ Session configuration started")
         
         guard let device = AVCaptureDevice.default(.builtInLiDARDepthCamera, for: .video, position: .back) ??
                          AVCaptureDevice.default(.builtInDualCamera, for: .video, position: .back) ??
                          AVCaptureDevice.default(for: .video) else {
-            print("❌ Camera not available")
+            logToFile("❌ Camera not available - no device found")
             return
         }
         
-        print("✅ Camera device found: \(device.localizedName)")
+        logToFile("✅ Camera device found: \(device.localizedName)")
         
         do {
             let input = try AVCaptureDeviceInput(device: device)
+            logToFile("✅ AVCaptureDeviceInput created")
+            
             if session.canAddInput(input) { 
                 session.addInput(input)
-                print("✅ Camera input added")
+                logToFile("✅ Camera input added to session")
             } else {
-                print("❌ Cannot add camera input")
+                logToFile("❌ Cannot add camera input - session.canAddInput returned false")
+                return
             }
             
             videoOutput = AVCaptureVideoDataOutput()
             videoOutput?.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
             videoOutput?.alwaysDiscardsLateVideoFrames = true
+            logToFile("✅ AVCaptureVideoDataOutput created")
+            
             if let videoOut = videoOutput, session.canAddOutput(videoOut) {
                 session.addOutput(videoOut)
-                print("✅ Video output added")
+                logToFile("✅ Video output added to session")
             } else {
-                print("❌ Cannot add video output")
+                logToFile("❌ Cannot add video output - session.canAddOutput returned false")
+                return
             }
             
             // Check if depth is supported by looking at supported depth formats
+            logToFile("🔍 Checking depth support - supportedDepthDataFormats count: \(device.activeFormat.supportedDepthDataFormats.count)")
+            
             if !device.activeFormat.supportedDepthDataFormats.isEmpty {
                 depthOutput = AVCaptureDepthDataOutput()
                 depthOutput?.isFilteringEnabled = true
                 depthOutput?.alwaysDiscardsLateDepthData = true
+                logToFile("✅ AVCaptureDepthDataOutput created")
+                
                 if let depthOut = depthOutput, session.canAddOutput(depthOut) {
                     session.addOutput(depthOut)
-                    print("✅ Depth output added (LiDAR supported)")
+                    logToFile("✅ Depth output added (LiDAR supported)")
                 } else {
-                    print("⚠️ Cannot add depth output")
+                    logToFile("⚠️ Cannot add depth output - session.canAddOutput returned false")
                 }
             } else {
-                print("⚠️ Depth not supported by this device")
+                logToFile("⚠️ Depth not supported by this device - supportedDepthDataFormats is empty")
             }
             
             try device.lockForConfiguration()
+            logToFile("✅ Device locked for configuration")
+            
             if device.isFocusModeSupported(.continuousAutoFocus) {
                 device.focusMode = .continuousAutoFocus
-                print("✅ Continuous autofocus enabled")
+                logToFile("✅ Continuous autofocus enabled")
+            } else {
+                logToFile("⚠️ Continuous autofocus not supported")
             }
             device.unlockForConfiguration()
+            logToFile("✅ Device unlocked")
             
             session.commitConfiguration()
-            print("✅ Session configuration committed")
+            logToFile("✅ Session configuration committed")
             
             // 🔹 ВАЖНО: запускаем сессию синхронно чтобы убедиться что она запустилась
             DispatchQueue.global(qos: .userInitiated).async { 
                 session.startRunning()
-                print("✅ Camera session running")
+                logToFile("✅ Camera session running (isRunning: \(session.isRunning))")
             }
-            print("🎥 Camera session started (LiDAR: \(depthOutput != nil))")
+            logToFile("🎥 Camera session started (LiDAR: \(depthOutput != nil))")
         } catch {
-            print("❌ Camera init error: \(error)")
+            logToFile("❌ Camera init error: \(error.localizedDescription)")
+            logToFile("❌ Error details: \(error)")
         }
     }
     
@@ -136,18 +182,18 @@ class LiDARDepthManager: NSObject {
     func setVideoDelegate(_ delegate: AVCaptureVideoDataOutputSampleBufferDelegate, queue: DispatchQueue) {
         if videoOutput != nil {
             videoOutput?.setSampleBufferDelegate(delegate, queue: queue)
-            print("✅ Video delegate set")
+            logToFile("✅ Video delegate set successfully")
         } else {
-            print("❌ Cannot set video delegate - videoOutput is nil")
+            logToFile("❌ Cannot set video delegate - videoOutput is nil")
         }
     }
     
     func setDepthDelegate(_ delegate: AVCaptureDepthDataOutputDelegate, queue: DispatchQueue) {
         if depthOutput != nil {
             depthOutput?.setDelegate(delegate, callbackQueue: queue)
-            print("✅ Depth delegate set")
+            logToFile("✅ Depth delegate set successfully")
         } else {
-            print("⚠️ Cannot set depth delegate - depthOutput is nil")
+            logToFile("⚠️ Cannot set depth delegate - depthOutput is nil (LiDAR not available)")
         }
     }
     
@@ -542,11 +588,11 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         // 🔹 ЛОГИРОВАНИЕ ПЕРВОГО ФРЕЙМА
         if frameSequence == 0 {
-            print("🎥 captureOutput called for FIRST TIME!")
+            logToFile("🎥 captureOutput called for FIRST TIME! - frames are being captured!")
         }
         
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { 
-            print("❌ captureOutput: no pixelBuffer")
+            logToFile("❌ captureOutput: no pixelBuffer - CMSampleBufferGetImageBuffer returned nil")
             return 
         }
         
@@ -555,7 +601,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         lastSentTime = now
         
         guard let uiImage = imageFromPixelBuffer(pixelBuffer) else { 
-            print("❌ captureOutput: failed to create UIImage")
+            logToFile("❌ captureOutput: failed to create UIImage from pixelBuffer")
             return 
         }
         
@@ -781,43 +827,47 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     
     // MARK: - Streaming Control
     @MainActor func startStreaming() {
-        print("🎬 startStreaming called with streamMode: \(streamMode), useLiDAR: \(useLiDAR)")
+        logToFile("🎬 startStreaming called with streamMode: \(streamMode), useLiDAR: \(useLiDAR)")
         
         lidarManager = LiDARDepthManager()
-        print("🎬 LiDARDepthManager created")
+        logToFile("🎬 LiDARDepthManager created")
         
         // 🔹 ВАЖНО: запускаем сессию ПЕРВОЙ
         lidarManager?.startSession()
-        print("🎬 Camera session started")
+        logToFile("🎬 Camera session startSession() called")
         
         // 🔹 ЗАТЕМ устанавливаем делегаты с небольшой задержкой
         // чтобы убедиться что outputs уже созданы
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else { 
+                logToFile("❌ startStreaming: self is nil in asyncAfter")
+                return 
+            }
             
-            print("🎬 Setting delegates...")
+            logToFile("🎬 Setting delegates after 0.2 sec delay...")
             self.lidarManager?.setVideoDelegate(self, queue: .global(qos: .userInitiated))
-            print("✅ Video delegate set")
+            logToFile("✅ Video delegate set in ARStreamer")
             
             if self.useLiDAR {
                 self.lidarManager?.setDepthDelegate(self, queue: .global(qos: .userInitiated))
-                print("✅ Depth delegate set")
+                logToFile("✅ Depth delegate set in ARStreamer")
             }
             
-            print("🎬 All delegates set, waiting for frames...")
+            logToFile("🎬 All delegates set, waiting for frames...")
         }
         
         // 🔹 ДОБАВЛЯЕМ ЛОГИРОВАНИЕ О СОСТОЯНИИ КАМЕРЫ
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            print("🎬 Camera session check after 1.5 seconds:")
-            print("   - lidarManager: \(self.lidarManager != nil)")
-            print("   - streamMode: \(self.streamMode)")
-            print("   - useLiDAR: \(self.useLiDAR)")
-            print("   - frameCount: \(self.frameCount)")
-            print("   - bytesSent: \(self.bytesSent)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self = self else { return }
+            logToFile("🎬 Camera session check after 1.5 seconds:")
+            logToFile("   - lidarManager: \(self.lidarManager != nil)")
+            logToFile("   - streamMode: \(self.streamMode)")
+            logToFile("   - useLiDAR: \(self.useLiDAR)")
+            logToFile("   - frameCount: \(self.frameCount)")
+            logToFile("   - bytesSent: \(self.bytesSent)")
         }
         
-        print("🎬 Streaming initialization started (LiDAR: \(useLiDAR), Mode: \(streamMode))")
+        logToFile("🎬 Streaming initialization started (LiDAR: \(useLiDAR), Mode: \(streamMode))")
     }
     
     func stopStreaming() {
