@@ -277,37 +277,57 @@ class NetworkConnectViewModel: ObservableObject {
     
     // MARK: - Перезапуск
     func restartSession(useLiDAR: Bool) {
+        print("🔄 restartSession called: useLiDAR=\(useLiDAR)")
+        logToFile("🔄 restartSession called: useLiDAR=\(useLiDAR)")
+        
         // 🔹 ОБНОВЛЯЕМ НАСТРОЙКУ sendDepth при изменении LiDAR
         self.sendDepth = useLiDAR
         
-        arStreamer?.stopStreaming()
-        guard let connection = connection else { return }
-        
-        let fps = Int(targetFPS) ?? 60
-        
-        // 🔹 ИСПРАВИЛ: правильный callback с двумя изображениями
-        arStreamer = ARStreamer(
-            connection: connection,
-            useLiDAR: useLiDAR,
-            streamMode: streamMode,
-            compressionQuality: 0.8,
-            targetFPS: fps,
-            previewCallback: { [weak self] rgbImage, depthImage in
-                print("📸 previewCallback (restartSession): rgbImage=\(rgbImage.size), depthImage=\(depthImage?.size ?? .zero)")
-                Task { @MainActor in
-                    self?.previewImage = rgbImage
-                    self?.depthPreviewImage = depthImage
-                }
-            },
-            fpsCallback: { [weak self] fps, bytes in
-                Task { @MainActor in
-                    self?.fpsText = "\(fps)"
-                    self?.networkSpeedText = "\(bytes / 1024) KB/s"
-                }
-            },
-            usbManager: streamMode.uppercased() == "USB" ? usbManager : nil
-        )
-        arStreamer?.startStreaming()
+        // 🔹 ВАЖНО: запускаем в фоне чтобы не заморозить UI
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            print("🔄 Stopping old session...")
+            self?.arStreamer?.stopStreaming()
+            
+            guard let connection = self?.connection else {
+                print("❌ restartSession: connection is nil")
+                return
+            }
+            
+            let fps = Int(self?.targetFPS ?? "60") ?? 60
+            
+            print("🔄 Creating new ARStreamer with useLiDAR=\(useLiDAR)")
+            
+            // 🔹 ИСПРАВИЛ: правильный callback с двумя изображениями
+            let newStreamer = ARStreamer(
+                connection: connection,
+                useLiDAR: useLiDAR,
+                streamMode: self?.streamMode ?? "TCP_JPEG",
+                compressionQuality: 0.8,
+                targetFPS: fps,
+                previewCallback: { [weak self] rgbImage, depthImage in
+                    print("📸 previewCallback (restartSession): rgbImage=\(rgbImage.size), depthImage=\(depthImage?.size ?? .zero)")
+                    Task { @MainActor in
+                        self?.previewImage = rgbImage
+                        self?.depthPreviewImage = depthImage
+                    }
+                },
+                fpsCallback: { [weak self] fps, bytes in
+                    Task { @MainActor in
+                        self?.fpsText = "\(fps)"
+                        self?.networkSpeedText = "\(bytes / 1024) KB/s"
+                    }
+                },
+                usbManager: (self?.streamMode.uppercased() == "USB") ? self?.usbManager : nil
+            )
+            
+            DispatchQueue.main.async {
+                self?.arStreamer = newStreamer
+                print("🔄 Starting new session...")
+                self?.arStreamer?.startStreaming()
+                print("✅ restartSession completed")
+                self?.logToFile("✅ restartSession completed")
+            }
+        }
     }
     
     // MARK: - Отключение
