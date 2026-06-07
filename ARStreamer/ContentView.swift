@@ -172,19 +172,11 @@ struct ContentView: View {
                 }
             }
             .padding(.horizontal)
-            .onChange(of: viewModel.previewImage) { newImage in
-                // 🔹 Когда приходит первое изображение, переходим на экран превью
-                print("📸 onChange triggered: newImage = \(newImage != nil), isConnecting = \(isConnecting)")
-                if newImage != nil && isConnecting {
-                    print("✅ Transitioning to streaming view!")
-                    isConnected = true
-                    isConnecting = false
-                }
-            }
-            .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
-                // 🔹 Таймер для проверки подключения (на случай если видео не приходит)
-                if isConnecting && viewModel.previewImage != nil {
-                    print("⏱️ Timer triggered: transitioning to streaming view!")
+            .onChange(of: viewModel.frameCount) { frameCount in
+                // 🔹 Когда приходит первое изображение (frameCount > 0), переходим на экран превью
+                print("� onChange frameCount triggered: frameCount = \(frameCount), isConnecting = \(isConnecting)")
+                if frameCount > 0 && isConnecting {
+                    print("✅ Transitioning to streaming view! (frameCount=\(frameCount))")
                     isConnected = true
                     isConnecting = false
                 }

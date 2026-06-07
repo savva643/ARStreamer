@@ -41,6 +41,7 @@ class NetworkConnectViewModel: ObservableObject {
     @Published var pingText: String = "— ms"
     @Published var localIPText: String = "—"
     @Published var serverIPText: String = "—"
+    @Published var frameCount: Int = 0 // 🔹 НОВОЕ: счетчик фреймов для отслеживания
 
     @AppStorage("serverIP") var serverIP: String = "192.168.1.100"
     @AppStorage("serverPort") private var serverPort: String = "9000"
@@ -242,6 +243,9 @@ class NetworkConnectViewModel: ObservableObject {
                     self?.depthPreviewImage = depthImage
                     self?.statusText = "📹 Видео: \(Int(rgbImage.size.width))x\(Int(rgbImage.size.height))"
                     logToFile("✅ statusText updated: \(self?.statusText ?? "nil")")
+                    // 🔹 ВАЖНО: увеличиваем счетчик чтобы onChange срабатывал
+                    self?.frameCount += 1
+                    logToFile("📊 frameCount incremented: \(self?.frameCount ?? 0)")
                 }
             },
             fpsCallback: { [weak self] fps, bytes in
