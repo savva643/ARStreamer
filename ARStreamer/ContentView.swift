@@ -29,6 +29,15 @@ struct ContentView: View {
                     mainMenuView
                 }
             }
+            .onChange(of: viewModel.frameCount) { frameCount in
+                // 🔹 КЛЮЧЕВОЕ: onChange на ZStack уровне срабатывает всегда
+                print("📊 ZStack onChange frameCount triggered: frameCount = \(frameCount), isConnecting = \(isConnecting)")
+                if frameCount > 0 && isConnecting {
+                    print("✅ Transitioning to streaming view! (frameCount=\(frameCount))")
+                    isConnected = true
+                    isConnecting = false
+                }
+            }
             .onAppear {
                 viewModel.fetchLocalIP()
                 updateOrientation()
@@ -172,15 +181,6 @@ struct ContentView: View {
                 }
             }
             .padding(.horizontal)
-            .onChange(of: viewModel.frameCount) { frameCount in
-                // 🔹 Когда приходит первое изображение (frameCount > 0), переходим на экран превью
-                print("� onChange frameCount triggered: frameCount = \(frameCount), isConnecting = \(isConnecting)")
-                if frameCount > 0 && isConnecting {
-                    print("✅ Transitioning to streaming view! (frameCount=\(frameCount))")
-                    isConnected = true
-                    isConnecting = false
-                }
-            }
 
             Spacer()
 
