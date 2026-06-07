@@ -154,26 +154,28 @@ class NetworkConnectViewModel: ObservableObject {
         // 🔹 ПРОСТАЯ ОБРАБОТКА СТАТУСА БЕЗ Combine
         // Запускаем проверку статуса через таймер
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
-            guard let self = self, let usbManager = self.usbManager else {
-                timer.invalidate()
-                return
-            }
-            
-            // Обновляем статус
-            self.statusText = usbManager.connectionStatus
-            
-            // Если подключились, запускаем стриминг
-            if usbManager.isConnected && self.arStreamer == nil {
-                self.statusText = "✅ USB подключено - начинаем трансляцию"
-                timer.invalidate()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.startStreaming()
+            Task { @MainActor in
+                guard let self = self, let usbManager = self.usbManager else {
+                    timer.invalidate()
+                    return
                 }
-            }
-            
-            // Если USB менеджер уничтожен, останавливаем таймер
-            if self.usbManager == nil {
-                timer.invalidate()
+                
+                // Обновляем статус
+                self.statusText = usbManager.connectionStatus
+                
+                // Если подключились, запускаем стриминг
+                if usbManager.isConnected && self.arStreamer == nil {
+                    self.statusText = "✅ USB подключено - начинаем трансляцию"
+                    timer.invalidate()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.startStreaming()
+                    }
+                }
+                
+                // Если USB менеджер уничтожен, останавливаем таймер
+                if self.usbManager == nil {
+                    timer.invalidate()
+                }
             }
         }
         

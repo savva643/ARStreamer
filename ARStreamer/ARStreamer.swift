@@ -7,32 +7,7 @@ import CoreMedia
 import CoreMotion
 import CoreVideo
 
-// 🔹 ЛОГИРОВАНИЕ В ФАЙЛ (из NetworkConnectViewModel)
-func logToFile(_ message: String) {
-    let dateFormatter = DateFormatter()
-    dateFormatter.dateFormat = "HH:mm:ss.SSS"
-    let timestamp = dateFormatter.string(from: Date())
-    let logMessage = "[\(timestamp)] \(message)\n"
-    
-    if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-        let logFilePath = documentsPath.appendingPathComponent("ARStreamer.log")
-        
-        if FileManager.default.fileExists(atPath: logFilePath.path) {
-            if let fileHandle = FileHandle(forWritingAtPath: logFilePath.path) {
-                fileHandle.seekToEndOfFile()
-                if let data = logMessage.data(using: .utf8) {
-                    fileHandle.write(data)
-                }
-                fileHandle.closeFile()
-            }
-        } else {
-            try? logMessage.write(toFile: logFilePath.path, atomically: true, encoding: .utf8)
-        }
-    }
-    
-    // Также выводим в консоль
-    print(message)
-}
+// 🔹 logToFile функция определена в NetworkConnectViewModel.swift
 
 // MARK: - Extensions
 extension CMDeviceMotion {
@@ -346,12 +321,13 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         var data = Data()
         
         // 1. Timestamp (UInt64, 8 bytes)
-        var timestamp = UInt64(now * 1000)
-        withUnsafeBytes(of: timestamp) { data.append(contentsOf: $0) }
+        let timestamp = UInt64(now * 1000)
+        var timestampVar = timestamp
+        withUnsafeBytes(of: timestampVar) { data.append(contentsOf: $0) }
         
         // 2-5. IMU Data (12 x Double = 96 bytes) - accel, gyro, gravity, mag
         if let sensor = lastSensorData {
-            var values: [Double] = [
+            let values: [Double] = [
                 Double(sensor.accelX), Double(sensor.accelY), Double(sensor.accelZ),
                 Double(sensor.gyroX), Double(sensor.gyroY), Double(sensor.gyroZ),
                 Double(sensor.gravityX), Double(sensor.gravityY), Double(sensor.gravityZ),
@@ -474,10 +450,12 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         var pointCloudData = Data()
         
         // Add header: width, height (4 bytes each)
-        var w = UInt32(width).bigEndian
-        var h = UInt32(height).bigEndian
-        withUnsafeBytes(of: w) { pointCloudData.append(contentsOf: $0) }
-        withUnsafeBytes(of: h) { pointCloudData.append(contentsOf: $0) }
+        let w = UInt32(width).bigEndian
+        let h = UInt32(height).bigEndian
+        var wVar = w
+        var hVar = h
+        withUnsafeBytes(of: wVar) { pointCloudData.append(contentsOf: $0) }
+        withUnsafeBytes(of: hVar) { pointCloudData.append(contentsOf: $0) }
         
         // Add depth data as point cloud (can be processed by Lidar3DProcessor)
         let dataSize = height * bytesPerRow
@@ -503,10 +481,12 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         var confidenceData = Data()
         
         // Header: width, height
-        var w = UInt32(width).bigEndian
-        var h = UInt32(height).bigEndian
-        withUnsafeBytes(of: w) { confidenceData.append(contentsOf: $0) }
-        withUnsafeBytes(of: h) { confidenceData.append(contentsOf: $0) }
+        let w = UInt32(width).bigEndian
+        let h = UInt32(height).bigEndian
+        var wVar = w
+        var hVar = h
+        withUnsafeBytes(of: wVar) { confidenceData.append(contentsOf: $0) }
+        withUnsafeBytes(of: hVar) { confidenceData.append(contentsOf: $0) }
         
         // Generate confidence values based on depth validity
         // 0 = low confidence, 255 = high confidence
