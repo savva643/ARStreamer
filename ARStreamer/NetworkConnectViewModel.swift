@@ -127,31 +127,33 @@ class NetworkConnectViewModel: ObservableObject {
         // 🔹 ПРОСТАЯ ОБРАБОТКА СТАТУСА БЕЗ Combine
         // Запускаем проверку статуса через таймер
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
-            guard let self = self, let usbManager = self.usbManager else {
-                print("❌ USB timer: self or usbManager is nil")
-                timer.invalidate()
-                return
-            }
-            
-            // Обновляем статус
-            self.statusText = usbManager.connectionStatus
-            print("🔌 USB status: \(usbManager.connectionStatus), isConnected: \(usbManager.isConnected), arStreamer: \(self.arStreamer != nil)")
-            
-            // Если подключились, запускаем стриминг
-            if usbManager.isConnected && self.arStreamer == nil {
-                print("🎬 USB connected! Starting streaming...")
-                self.statusText = "✅ USB подключено - начинаем трансляцию"
-                timer.invalidate()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    print("🎬 Calling startStreaming() after 0.5s delay")
-                    self.startStreaming()
+            DispatchQueue.main.async {
+                guard let self = self, let usbManager = self.usbManager else {
+                    print("❌ USB timer: self or usbManager is nil")
+                    timer.invalidate()
+                    return
                 }
-            }
-            
-            // Если USB менеджер уничтожен, останавливаем таймер
-            if self.usbManager == nil {
-                print("❌ USB manager destroyed, stopping timer")
-                timer.invalidate()
+                
+                // Обновляем статус
+                self.statusText = usbManager.connectionStatus
+                print("🔌 USB status: \(usbManager.connectionStatus), isConnected: \(usbManager.isConnected), arStreamer: \(self.arStreamer != nil)")
+                
+                // Если подключились, запускаем стриминг
+                if usbManager.isConnected && self.arStreamer == nil {
+                    print("🎬 USB connected! Starting streaming...")
+                    self.statusText = "✅ USB подключено - начинаем трансляцию"
+                    timer.invalidate()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        print("🎬 Calling startStreaming() after 0.5s delay")
+                        self.startStreaming()
+                    }
+                }
+                
+                // Если USB менеджер уничтожен, останавливаем таймер
+                if self.usbManager == nil {
+                    print("❌ USB manager destroyed, stopping timer")
+                    timer.invalidate()
+                }
             }
         }
         

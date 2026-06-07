@@ -35,12 +35,14 @@ struct ContentView: View {
             }
             // 🔹 ВАЖНО: наблюдаем за USB соединением в реальном времени
             .onReceive(Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()) { _ in
-                if isConnecting {
-                    // Проверяем USB соединение
-                    if let usbManager = viewModel.usbManager, usbManager.isConnected {
-                        print("🎬 ContentView: USB connected detected, switching to streaming view")
-                        isConnected = true
-                        isConnecting = false
+                DispatchQueue.main.async {
+                    if isConnecting {
+                        // Проверяем USB соединение
+                        if let usbManager = viewModel.usbManager, usbManager.isConnected {
+                            print("🎬 ContentView: USB connected detected, switching to streaming view")
+                            isConnected = true
+                            isConnecting = false
+                        }
                     }
                 }
             }
