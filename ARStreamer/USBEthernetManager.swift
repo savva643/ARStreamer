@@ -87,14 +87,19 @@ class USBEthernetManager: ObservableObject {
         
         let networkPrefix = components[0...2].joined(separator: ".")
         
+        // 🔹 ПРИОРИТЕТ: сначала добавляем 172.20.10.x (USB Ethernet)
+        possibleIPs.append(contentsOf: ["172.20.10.1", "172.20.10.2", "172.20.10.3", "172.20.10.4"])
+        
+        // 🔹 Затем добавляем IP из текущей сети
         for i in 1...10 {
             let ip = "\(networkPrefix).\(i)"
-            possibleIPs.append(ip)
+            if !possibleIPs.contains(ip) {
+                possibleIPs.append(ip)
+            }
         }
         
-        if localIP.hasPrefix("172.20.10") {
-            possibleIPs.append(contentsOf: ["172.20.10.1", "172.20.10.2", "172.20.10.3", "172.20.10.4"])
-        } else if localIP.hasPrefix("169.254") {
+        // 🔹 Link-Local адреса в конце (низкий приоритет)
+        if localIP.hasPrefix("169.254") {
             possibleIPs.append(contentsOf: ["169.254.1.1", "169.254.2.1", "169.254.0.1"])
         } else if localIP.hasPrefix("192.168") {
             let thirdOctet = components[2]
