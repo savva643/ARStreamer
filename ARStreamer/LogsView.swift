@@ -36,12 +36,15 @@ struct LogsView: View {
             // Логи
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(logContent)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .id("logsEnd")
+                    SelectionView {
+                        Text(logContent)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                            .textSelection(.enabled)
+                            .id("logsEnd")
+                    }
                 }
                 .onAppear {
                     refreshLogs()

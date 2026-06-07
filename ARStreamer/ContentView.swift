@@ -142,12 +142,6 @@ struct ContentView: View {
                 Button(action: {
                     isConnecting = true
                     viewModel.start()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        if viewModel.statusText.contains("✅") || viewModel.statusText.contains("Подключено") {
-                            isConnected = true
-                            isConnecting = false
-                        }
-                    }
                 }) {
                     HStack {
                         Image(systemName: "play.circle.fill")
@@ -159,6 +153,20 @@ struct ContentView: View {
                     .background(Color.blue)
                     .foregroundColor(.white)
                     .cornerRadius(12)
+                }
+                .onChange(of: viewModel.previewImage) { newImage in
+                    // 🔹 Когда приходит первое изображение, переходим на экран превью
+                    if newImage != nil && isConnecting {
+                        isConnected = true
+                        isConnecting = false
+                    }
+                }
+                .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
+                    // 🔹 Таймер для проверки подключения (на случай если видео не приходит)
+                    if isConnecting && viewModel.previewImage != nil {
+                        isConnected = true
+                        isConnecting = false
+                    }
                 }
 
                 // 🔹 ИЗМЕНИЛ: кнопка "О приложении" вместо Debug
