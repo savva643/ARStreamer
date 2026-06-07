@@ -323,7 +323,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         // 1. Timestamp (UInt64, 8 bytes)
         let timestamp = UInt64(now * 1000)
         var timestampVar = timestamp
-        withUnsafeBytes(of: timestampVar) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: &timestampVar) { data.append(contentsOf: $0) }
         
         // 2-5. IMU Data (12 x Double = 96 bytes) - accel, gyro, gravity, mag
         if let sensor = lastSensorData {
@@ -450,12 +450,10 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         var pointCloudData = Data()
         
         // Add header: width, height (4 bytes each)
-        let w = UInt32(width).bigEndian
-        let h = UInt32(height).bigEndian
-        var wVar = w
-        var hVar = h
-        withUnsafeBytes(of: wVar) { pointCloudData.append(contentsOf: $0) }
-        withUnsafeBytes(of: hVar) { pointCloudData.append(contentsOf: $0) }
+        var w = UInt32(width).bigEndian
+        var h = UInt32(height).bigEndian
+        withUnsafeBytes(of: &w) { pointCloudData.append(contentsOf: $0) }
+        withUnsafeBytes(of: &h) { pointCloudData.append(contentsOf: $0) }
         
         // Add depth data as point cloud (can be processed by Lidar3DProcessor)
         let dataSize = height * bytesPerRow
@@ -481,12 +479,10 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         var confidenceData = Data()
         
         // Header: width, height
-        let w = UInt32(width).bigEndian
-        let h = UInt32(height).bigEndian
-        var wVar = w
-        var hVar = h
-        withUnsafeBytes(of: wVar) { confidenceData.append(contentsOf: $0) }
-        withUnsafeBytes(of: hVar) { confidenceData.append(contentsOf: $0) }
+        var w = UInt32(width).bigEndian
+        var h = UInt32(height).bigEndian
+        withUnsafeBytes(of: &w) { confidenceData.append(contentsOf: $0) }
+        withUnsafeBytes(of: &h) { confidenceData.append(contentsOf: $0) }
         
         // Generate confidence values based on depth validity
         // 0 = low confidence, 255 = high confidence
