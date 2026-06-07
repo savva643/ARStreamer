@@ -150,6 +150,19 @@ class LiDARDepthManager: NSObject {
             print("⚠️ Cannot set depth delegate - depthOutput is nil")
         }
     }
+    
+    // 🔹 НОВЫЙ МЕТОД: установить делегаты после инициализации
+    func setDelegates(_ videoDelegate: AVCaptureVideoDataOutputSampleBufferDelegate?, 
+                     _ depthDelegate: AVCaptureDepthDataOutputDelegate?,
+                     videoQueue: DispatchQueue,
+                     depthQueue: DispatchQueue) {
+        if let videoDelegate = videoDelegate {
+            setVideoDelegate(videoDelegate, queue: videoQueue)
+        }
+        if let depthDelegate = depthDelegate {
+            setDepthDelegate(depthDelegate, queue: depthQueue)
+        }
+    }
 }
 
 // MARK: - ARStreamer Main Class
@@ -527,6 +540,11 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     
     // MARK: - Video Frame Processing
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        // 🔹 ЛОГИРОВАНИЕ ПЕРВОГО ФРЕЙМА
+        if frameSequence == 0 {
+            print("🎥 captureOutput called for FIRST TIME!")
+        }
+        
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { 
             print("❌ captureOutput: no pixelBuffer")
             return 
@@ -553,8 +571,8 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         }
         
         // 🔹 ЛОГИРОВАНИЕ ВИДЕО ФРЕЙМОВ
-        if frameSequence % 30 == 0 {
-            print("📹 Video frame #\(frameSequence): \(cameraData.imageResolution) @ \(Int(1.0/frameInterval)) FPS")
+        if frameSequence <= 5 || frameSequence % 30 == 0 {
+            print("📹 Video frame #\(frameSequence): \(cameraData.imageResolution) @ \(Int(1.0/frameInterval)) FPS, streamMode=\(streamMode)")
         }
         
         // Send sensor data synchronized with frame
@@ -766,16 +784,32 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         print("🎬 startStreaming called with streamMode: \(streamMode), useLiDAR: \(useLiDAR)")
         
         lidarManager = LiDARDepthManager()
-        lidarManager?.setVideoDelegate(self, queue: .global(qos: .userInitiated))
-        if useLiDAR {
-            lidarManager?.setDepthDelegate(self, queue: .global(qos: .userInitiated))
-            print("🎬 LiDAR depth delegate set")
-        }
+        print("🎬 LiDARDepthManager created")
+        
+        // 🔹 ВАЖНО: запускаем сессию ПЕРВОЙ
         lidarManager?.startSession()
+        print("🎬 Camera session started")
+        
+        // 🔹 ЗАТЕМ устанавливаем делегаты с небольшой задержкой
+        // чтобы убедиться что outputs уже созданы
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self = self else { return }
+            
+            print("🎬 Setting delegates...")
+            self.lidarManager?.setVideoDelegate(self, queue: .global(qos: .userInitiated))
+            print("✅ Video delegate set")
+            
+            if self.useLiDAR {
+                self.lidarManager?.setDepthDelegate(self, queue: .global(qos: .userInitiated))
+                print("✅ Depth delegate set")
+            }
+            
+            print("🎬 All delegates set, waiting for frames...")
+        }
         
         // 🔹 ДОБАВЛЯЕМ ЛОГИРОВАНИЕ О СОСТОЯНИИ КАМЕРЫ
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            print("🎬 Camera session check after 1 second:")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            print("🎬 Camera session check after 1.5 seconds:")
             print("   - lidarManager: \(self.lidarManager != nil)")
             print("   - streamMode: \(self.streamMode)")
             print("   - useLiDAR: \(self.useLiDAR)")
@@ -783,7 +817,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             print("   - bytesSent: \(self.bytesSent)")
         }
         
-        print("🎬 Streaming started (LiDAR: \(useLiDAR), Mode: \(streamMode))")
+        print("🎬 Streaming initialization started (LiDAR: \(useLiDAR), Mode: \(streamMode))")
     }
     
     func stopStreaming() {
