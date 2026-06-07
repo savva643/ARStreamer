@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var isConnected = false
     @State private var mirrorPreview = false
     @State private var isConnecting = false
+    @State private var lastPreviewImageSize: CGSize = .zero
 
     // 🔹 НОВОЕ: Режимы отображения и временный текст
         @State private var displayMode: ARStreamer.DisplayMode = .rgbOnly
@@ -141,6 +142,7 @@ struct ContentView: View {
             VStack(spacing: 12) {
                 Button(action: {
                     isConnecting = true
+                    print("🎬 Connect button tapped - isConnecting = true")
                     viewModel.start()
                 }) {
                     HStack {
@@ -153,20 +155,6 @@ struct ContentView: View {
                     .background(Color.blue)
                     .foregroundColor(.white)
                     .cornerRadius(12)
-                }
-                .onChange(of: viewModel.previewImage) { newImage in
-                    // 🔹 Когда приходит первое изображение, переходим на экран превью
-                    if newImage != nil && isConnecting {
-                        isConnected = true
-                        isConnecting = false
-                    }
-                }
-                .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
-                    // 🔹 Таймер для проверки подключения (на случай если видео не приходит)
-                    if isConnecting && viewModel.previewImage != nil {
-                        isConnected = true
-                        isConnecting = false
-                    }
                 }
 
                 // 🔹 ИЗМЕНИЛ: кнопка "О приложении" вместо Debug
@@ -184,6 +172,23 @@ struct ContentView: View {
                 }
             }
             .padding(.horizontal)
+            .onChange(of: viewModel.previewImage) { newImage in
+                // 🔹 Когда приходит первое изображение, переходим на экран превью
+                print("📸 onChange triggered: newImage = \(newImage != nil), isConnecting = \(isConnecting)")
+                if newImage != nil && isConnecting {
+                    print("✅ Transitioning to streaming view!")
+                    isConnected = true
+                    isConnecting = false
+                }
+            }
+            .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
+                // 🔹 Таймер для проверки подключения (на случай если видео не приходит)
+                if isConnecting && viewModel.previewImage != nil {
+                    print("⏱️ Timer triggered: transitioning to streaming view!")
+                    isConnected = true
+                    isConnecting = false
+                }
+            }
 
             Spacer()
 
