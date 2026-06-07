@@ -325,7 +325,7 @@ class NetworkConnectViewModel: ObservableObject {
                 print("🔄 Starting new session...")
                 self?.arStreamer?.startStreaming()
                 print("✅ restartSession completed")
-                self?.logToFile("✅ restartSession completed")
+                logToFile("✅ restartSession completed")
             }
         }
     }
