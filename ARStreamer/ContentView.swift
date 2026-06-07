@@ -33,6 +33,17 @@ struct ContentView: View {
                 updateOrientation()
                 useLiDAR = viewModel.sendDepth
             }
+            // 🔹 ВАЖНО: наблюдаем за USB соединением в реальном времени
+            .onReceive(Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()) { _ in
+                if isConnecting {
+                    // Проверяем USB соединение
+                    if let usbManager = viewModel.usbManager, usbManager.isConnected {
+                        print("🎬 ContentView: USB connected detected, switching to streaming view")
+                        isConnected = true
+                        isConnecting = false
+                    }
+                }
+            }
             .sheet(isPresented: $showInfoModal) {
                 InfoView()
             }
@@ -140,14 +151,9 @@ struct ContentView: View {
             // Основные кнопки
             VStack(spacing: 12) {
                 Button(action: {
+                    print("🎬 Connect button tapped")
                     isConnecting = true
                     viewModel.start()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        if viewModel.statusText.contains("✅") || viewModel.statusText.contains("Подключено") {
-                            isConnected = true
-                            isConnecting = false
-                        }
-                    }
                 }) {
                     HStack {
                         Image(systemName: "play.circle.fill")

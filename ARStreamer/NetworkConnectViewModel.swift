@@ -128,24 +128,29 @@ class NetworkConnectViewModel: ObservableObject {
         // Запускаем проверку статуса через таймер
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
             guard let self = self, let usbManager = self.usbManager else {
+                print("❌ USB timer: self or usbManager is nil")
                 timer.invalidate()
                 return
             }
             
             // Обновляем статус
             self.statusText = usbManager.connectionStatus
+            print("🔌 USB status: \(usbManager.connectionStatus), isConnected: \(usbManager.isConnected), arStreamer: \(self.arStreamer != nil)")
             
             // Если подключились, запускаем стриминг
             if usbManager.isConnected && self.arStreamer == nil {
+                print("🎬 USB connected! Starting streaming...")
                 self.statusText = "✅ USB подключено - начинаем трансляцию"
                 timer.invalidate()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    print("🎬 Calling startStreaming() after 0.5s delay")
                     self.startStreaming()
                 }
             }
             
             // Если USB менеджер уничтожен, останавливаем таймер
             if self.usbManager == nil {
+                print("❌ USB manager destroyed, stopping timer")
                 timer.invalidate()
             }
         }
@@ -156,10 +161,16 @@ class NetworkConnectViewModel: ObservableObject {
 
     // MARK: - Запуск стриминга
     private func startStreaming() {
+        print("🎬 NetworkConnectViewModel.startStreaming() called")
+        print("   streamMode: \(streamMode)")
+        print("   sendDepth: \(sendDepth)")
+        print("   targetFPS: \(targetFPS)")
+        
         // 🔹 ИСПРАВЛЕНИЕ: для USB создаем фиктивное соединение
         let effectiveConnection: NWConnection
         
         if streamMode.uppercased() == "USB" {
+            print("🎬 Creating dummy connection for USB mode")
             // Создаем фиктивное соединение для USB (оно не будет использоваться)
             let host = NWEndpoint.Host("127.0.0.1")
             let port = NWEndpoint.Port(integerLiteral: 1)
@@ -176,6 +187,11 @@ class NetworkConnectViewModel: ObservableObject {
         
         // 🔹 СИНХРОНИЗИРУЕМ LiDAR С НАСТРОЙКАМИ
         let shouldUseLiDAR = self.sendDepth
+        
+        print("🎬 Creating ARStreamer with:")
+        print("   useLiDAR: \(shouldUseLiDAR)")
+        print("   streamMode: \(streamMode)")
+        print("   fps: \(fps)")
         
         // 🔹 ИСПРАВИЛ: правильный callback с двумя изображениями
         arStreamer = ARStreamer(
@@ -199,8 +215,10 @@ class NetworkConnectViewModel: ObservableObject {
             usbManager: streamMode.uppercased() == "USB" ? usbManager : nil
         )
         
+        print("🎬 ARStreamer created, calling startStreaming()")
         // 🔹 ВАЖНО: для USB сразу запускаем AR сессию
         arStreamer?.startStreaming()
+        print("🎬 startStreaming() called on arStreamer")
     }
 
     func switchDisplayMode(_ mode: ARStreamer.DisplayMode) {
