@@ -11,6 +11,9 @@ class USBEthernetManager: ObservableObject {
     @Published var connectionStatus: String = "Не подключено"
     @Published var isConnected: Bool = false
     
+    // 🔹 CALLBACK ДЛЯ ЗАПУСКА СТРИМИНГА
+    var onConnectionReady: (() -> Void)?
+    
     // 🔹 ТЕПЕРЬ ИСПОЛЬЗУЕМ ТОЛЬКО ОДИН ПОРТ ДЛЯ ВСЕХ ДАННЫХ
     static let usbPort: UInt16 = 9001
     
@@ -196,6 +199,10 @@ class USBEthernetManager: ObservableObject {
                     
                     USBEthernetManager.usbHostIP = hostIP
                     self.startReceiving()
+                    
+                    // 🔹 ВЫЗЫВАЕМ CALLBACK ДЛЯ ЗАПУСКА СТРИМИНГА
+                    print("📡 Calling onConnectionReady callback")
+                    self.onConnectionReady?()
                     
                 case .failed(let error):
                     print("❌ Подключение к \(hostIP) не удалось: \(error.localizedDescription)")
