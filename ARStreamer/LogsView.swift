@@ -69,7 +69,18 @@ struct LogsView: View {
             
             if FileManager.default.fileExists(atPath: logFilePath.path) {
                 if let content = try? String(contentsOfFile: logFilePath.path, encoding: .utf8) {
-                    logContent = content.isEmpty ? "Логи пусты" : content
+                    if content.isEmpty {
+                        logContent = "Логи пусты"
+                    } else {
+                        // 🔹 ОПТИМИЗАЦИЯ: загружаем только последние 100 строк
+                        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+                        let lastLines = lines.count > 100 ? Array(lines.suffix(100)) : lines
+                        logContent = lastLines.joined(separator: "\n")
+                        
+                        if lines.count > 100 {
+                            logContent = "... (показаны последние 100 строк из \(lines.count)) ...\n\n" + logContent
+                        }
+                    }
                 } else {
                     logContent = "Ошибка при чтении логов"
                 }

@@ -194,61 +194,60 @@ struct ContentView: View {
     // 🔹 РЕЖИМ СТРИМИНГА С ДОПОЛНЕНИЯМИ
     private var streamingView: some View {
         ZStack {
-            // 🔹 ИЗМЕНИЛ: Отображаем оба изображения в зависимости от режима
-            if let preview = viewModel.previewImage, let depthPreview = viewModel.depthPreviewImage {
-                // Режим "оба сразу" - разделенный экран
-                if displayMode == .both {
-                    GeometryReader { proxy in
-                        if deviceOrientation.isLandscape {
-                            // 🔹 Горизонтальное разделение
-                            HStack(spacing: 0) {
-                                Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: proxy.size.width / 2, height: proxy.size.height)
-                                    .rotationEffect(.degrees(cameraRotation))
-                                    .clipped()
-
-                                Image(uiImage: depthPreview)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: proxy.size.width / 2, height: proxy.size.height)
-                                    .rotationEffect(.degrees(cameraRotation))
-                                    .clipped()
-                            }
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                        } else {
-                            // 🔹 Вертикальное разделение
-                            VStack(spacing: 0) {
-                                Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: proxy.size.width, height: proxy.size.height / 2)
-                                    .clipped()
-
-                                Image(uiImage: depthPreview)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: proxy.size.width, height: proxy.size.height / 2)
-                                    .clipped()
-                            }
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                        }
-                    }
+            // 🔹 ИСПРАВИЛ: Отделяем проверки RGB и LiDAR
+            if displayMode == .depthOnly, let depthPreview = viewModel.depthPreviewImage {
+                // Только LiDAR
+                Image(uiImage: depthPreview)
+                    .resizable()
+                    .scaledToFill()
                     .ignoresSafeArea()
-                } else if displayMode == .depthOnly {
-                    // Только LiDAR
-                    Image(uiImage: depthPreview)
-                        .resizable()
-                        .scaledToFill()
-                        .ignoresSafeArea()
-                } else {
-                    // Только RGB (по умолчанию)
-                    Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
-                        .resizable()
-                        .scaledToFill()
-                        .rotationEffect(.degrees(cameraRotation))
-                        .ignoresSafeArea()
+                    .onAppear {
+                        print("📊 Showing depthOnly mode")
+                        logToFile("📊 Showing depthOnly mode")
+                    }
+            } else if displayMode == .both, let preview = viewModel.previewImage, let depthPreview = viewModel.depthPreviewImage {
+                // Режим "оба сразу" - разделенный экран
+                GeometryReader { proxy in
+                    if deviceOrientation.isLandscape {
+                        // 🔹 Горизонтальное разделение
+                        HStack(spacing: 0) {
+                            Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: proxy.size.width / 2, height: proxy.size.height)
+                                .rotationEffect(.degrees(cameraRotation))
+                                .clipped()
+
+                            Image(uiImage: depthPreview)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: proxy.size.width / 2, height: proxy.size.height)
+                                .rotationEffect(.degrees(cameraRotation))
+                                .clipped()
+                        }
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                    } else {
+                        // 🔹 Вертикальное разделение
+                        VStack(spacing: 0) {
+                            Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: proxy.size.width, height: proxy.size.height / 2)
+                                .clipped()
+
+                            Image(uiImage: depthPreview)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: proxy.size.width, height: proxy.size.height / 2)
+                                .clipped()
+                        }
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                    }
+                }
+                .ignoresSafeArea()
+                .onAppear {
+                    print("📊 Showing both mode")
+                    logToFile("📊 Showing both mode")
                 }
             } else if let preview = viewModel.previewImage {
                 // Только RGB изображение доступно
@@ -618,9 +617,9 @@ struct ContentView: View {
                 cameraRotation = 270
                 print("📱 Landscape Left (провод слева): 270°")
             case .landscapeRight:
-                // Провод справа, блок камеры слева - нужно 180
-                cameraRotation = 180
-                print("📱 Landscape Right (провод справа): 180°")
+                // Провод справа, блок камеры слева - нужно 90
+                cameraRotation = 90
+                print("📱 Landscape Right (провод справа): 90°")
             default:
                 cameraRotation = 0
             }
