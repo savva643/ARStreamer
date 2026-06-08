@@ -44,6 +44,9 @@ class NetworkConnectViewModel: ObservableObject {
     @Published var frameCount: Int = 0 // 🔹 НОВОЕ: счетчик фреймов для отслеживания
     @Published var imuText: String = "IMU: —" // 🔹 НОВОЕ: отображение IMU данных
     @Published var positionText: String = "Pos: —" // 🔹 НОВОЕ: отображение позиции
+    
+    // 🔹 ЗАЩИТА ОТ ДУБЛИРОВАНИЯ LiDAR
+    private var lastDepthImage: UIImage? = nil
 
     @AppStorage("serverIP") var serverIP: String = "192.168.1.100"
     @AppStorage("serverPort") private var serverPort: String = "9000"
@@ -238,6 +241,16 @@ class NetworkConnectViewModel: ObservableObject {
             previewCallback: { [weak self] rgbImage, depthImage in
                 let msg = "📸 previewCallback: rgbImage=\(rgbImage.size), depthImage=\(depthImage?.size ?? .zero)"
                 logToFile(msg)
+                
+                // 🔹 ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: если depthImage такой же как предыдущий - игнорируем
+                if let depthImg = depthImage, let self = self {
+                    if let lastDepth = self.lastDepthImage, lastDepth === depthImg {
+                        logToFile("⚠️ DUPLICATE depth image detected - skipping")
+                        return
+                    }
+                    self.lastDepthImage = depthImg
+                }
+                
                 Task { @MainActor in
                     logToFile("📸 Setting previewImage on MainActor: \(rgbImage.size)")
                     self?.previewImage = rgbImage
@@ -291,6 +304,8 @@ class NetworkConnectViewModel: ObservableObject {
 
     func switchDisplayMode(_ mode: ARStreamer.DisplayMode) {
         arStreamer?.switchDisplayMode(mode)
+        // 🔹 Сбрасываем lastDepthImage при смене режима чтобы избежать конфликтов
+        lastDepthImage = nil
     }
     
     // MARK: - Перезапуск
@@ -324,6 +339,16 @@ class NetworkConnectViewModel: ObservableObject {
                 targetFPS: fps,
                 previewCallback: { [weak self] rgbImage, depthImage in
                     print("📸 previewCallback (restartSession): rgbImage=\(rgbImage.size), depthImage=\(depthImage?.size ?? .zero)")
+                    
+                    // 🔹 ЗАЩИТА ОТ ДУБЛИРОВАНИЯ
+                    if let depthImg = depthImage, let self = self {
+                        if let lastDepth = self.lastDepthImage, lastDepth === depthImg {
+                            print("⚠️ DUPLICATE depth image detected in restartSession - skipping")
+                            return
+                        }
+                        self.lastDepthImage = depthImg
+                    }
+                    
                     Task { @MainActor in
                         self?.previewImage = rgbImage
                         self?.depthPreviewImage = depthImage
@@ -368,6 +393,7 @@ class NetworkConnectViewModel: ObservableObject {
         // 🔹 ОЧИЩАЕМ ИЗОБРАЖЕНИЯ
         previewImage = nil
         depthPreviewImage = nil
+        lastDepthImage = nil
     }
 
     // MARK: - Пинг (только для сетевых режимов)
