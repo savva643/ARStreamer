@@ -12,7 +12,8 @@ struct ContentView: View {
     @State private var mirrorPreview = false
     @State private var isConnecting = false
     @State private var lastPreviewImageSize: CGSize = .zero
-    @State private var cameraRotation: Double = 0 // 🔹 НОВОЕ: точная ориентация камеры
+    @State private var cameraRotation: Double = 0 // 🔹 НОВОЕ: точная ориентация камеры (для UI preview)
+    @State private var deviceOrientationAngle: Double = 0 // 🔹 НОВОЕ: угол ориентации для ARLauncher
 
     // 🔹 НОВОЕ: Режимы отображения и временный текст
         @State private var displayMode: ARStreamer.DisplayMode = .rgbOnly
@@ -611,28 +612,34 @@ struct ContentView: View {
 
     private func updateOrientation() {
         let o = UIDevice.current.orientation
-        if o.isValidInterfaceOrientation { 
+        if o.isValidInterfaceOrientation {
             deviceOrientation = o
-            
+
             // 🔹 Вычисляем правильный угол поворота камеры в зависимости от ориентации
             switch o {
             case .portrait:
-                cameraRotation = 0
-                print("📱 Portrait: 0°")
+                cameraRotation = 180
+                deviceOrientationAngle = 0
+                print("📱 Portrait: preview 180°, device 0°")
             case .portraitUpsideDown:
-                cameraRotation = 180
-                print("📱 Portrait Upside Down: 180°")
-            case .landscapeLeft:
-                // Провод слева - нужно 270 градусов (или -90)
-                cameraRotation = 180
-                print("📱 Landscape Left (провод слева): 270°")
-            case .landscapeRight:
-                // Провод справа - нужно 90 градусов
-                cameraRotation = 180
-                print("📱 Landscape Right (провод справа): 90°")
-            default:
                 cameraRotation = 0
+                deviceOrientationAngle = 180
+                print("📱 Portrait Upside Down: preview 0°, device 180°")
+            case .landscapeLeft:
+                // Провод слева
+                cameraRotation = 90
+                deviceOrientationAngle = 270
+                print("📱 Landscape Left (провод слева): preview 90°, device 270°")
+            case .landscapeRight:
+                // Провод справа
+                cameraRotation = 270
+                deviceOrientationAngle = 90
+                print("📱 Landscape Right (провод справа): preview 270°, device 90°")
+            default:
+                cameraRotation = 180
+                deviceOrientationAngle = 0
             }
+            viewModel.sendOrientation(degrees: deviceOrientationAngle)
         }
     }
 }

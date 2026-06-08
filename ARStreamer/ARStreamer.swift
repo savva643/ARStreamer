@@ -586,6 +586,14 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         usbManager.sendData(packet)
     }
     
+    // MARK: - Orientation
+    func sendOrientation(degrees: Double) {
+        var angle = degrees
+        let data = Data(bytes: &angle, count: MemoryLayout.size(ofValue: angle))
+        frameSequence += 1
+        sendData(data, frameSequence: frameSequence, dataType: 0x0A)
+    }
+
     // MARK: - Video Frame Processing
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         // 🔹 ЛОГИРОВАНИЕ ПЕРВОГО ФРЕЙМА

@@ -478,4 +478,8 @@ extension NetworkConnectViewModel {
         default: return "—"
         }
     }
+
+    func sendOrientation(degrees: Double) {
+        arStreamer?.sendOrientation(degrees: degrees)
+    }
 }
