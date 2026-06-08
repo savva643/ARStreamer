@@ -618,7 +618,7 @@ struct ContentView: View {
             // 🔹 Вычисляем правильный угол поворота камеры в зависимости от ориентации
             switch o {
             case .portrait:
-                cameraRotation = 180
+                cameraRotation = 0
                 deviceOrientationAngle = 0
                 print("📱 Portrait: preview 180°, device 0°")
             case .portraitUpsideDown:
@@ -627,12 +627,12 @@ struct ContentView: View {
                 print("📱 Portrait Upside Down: preview 0°, device 180°")
             case .landscapeLeft:
                 // Провод слева
-                cameraRotation = 90
+                cameraRotation = 180
                 deviceOrientationAngle = 270
                 print("📱 Landscape Left (провод слева): preview 90°, device 270°")
             case .landscapeRight:
                 // Провод справа
-                cameraRotation = 270
+                cameraRotation = 180
                 deviceOrientationAngle = 90
                 print("📱 Landscape Right (провод справа): preview 270°, device 90°")
             default:
