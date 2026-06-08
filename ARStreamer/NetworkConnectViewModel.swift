@@ -240,7 +240,15 @@ class NetworkConnectViewModel: ObservableObject {
                     logToFile("📸 Setting previewImage on MainActor: \(rgbImage.size)")
                     self?.previewImage = rgbImage
                     logToFile("✅ previewImage set: \(self?.previewImage?.size ?? .zero)")
-                    self?.depthPreviewImage = depthImage
+                    
+                    // 🔹 ВАЖНО: обновляем depthPreviewImage
+                    if let depthImg = depthImage {
+                        self?.depthPreviewImage = depthImg
+                        logToFile("✅ depthPreviewImage set: \(depthImg.size)")
+                    } else {
+                        logToFile("⚠️ depthPreviewImage is nil")
+                    }
+                    
                     self?.statusText = "📹 Видео: \(Int(rgbImage.size.width))x\(Int(rgbImage.size.height))"
                     logToFile("✅ statusText updated: \(self?.statusText ?? "nil")")
                     // 🔹 ВАЖНО: увеличиваем счетчик чтобы onChange срабатывал

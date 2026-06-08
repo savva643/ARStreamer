@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var mirrorPreview = false
     @State private var isConnecting = false
     @State private var lastPreviewImageSize: CGSize = .zero
+    @State private var cameraRotation: Double = 0 // 🔹 НОВОЕ: точная ориентация камеры
 
     // 🔹 НОВОЕ: Режимы отображения и временный текст
         @State private var displayMode: ARStreamer.DisplayMode = .rgbOnly
@@ -205,14 +206,14 @@ struct ContentView: View {
                                     .resizable()
                                     .scaledToFill()
                                     .frame(width: proxy.size.width / 2, height: proxy.size.height)
-                                    .rotationEffect(.degrees(90))
+                                    .rotationEffect(.degrees(cameraRotation))
                                     .clipped()
 
                                 Image(uiImage: depthPreview)
                                     .resizable()
                                     .scaledToFill()
                                     .frame(width: proxy.size.width / 2, height: proxy.size.height)
-                                    .rotationEffect(.degrees(90))
+                                    .rotationEffect(.degrees(cameraRotation))
                                     .clipped()
                             }
                             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -246,7 +247,7 @@ struct ContentView: View {
                     Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
                         .resizable()
                         .scaledToFill()
-                        .rotationEffect(.degrees(deviceOrientation.isLandscape ? 90 : 0))
+                        .rotationEffect(.degrees(cameraRotation))
                         .ignoresSafeArea()
                 }
             } else if let preview = viewModel.previewImage {
@@ -254,7 +255,7 @@ struct ContentView: View {
                 Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
                     .resizable()
                     .scaledToFill()
-                    .rotationEffect(.degrees(deviceOrientation.isLandscape ? 90 : 0))
+                    .rotationEffect(.degrees(cameraRotation))
                     .ignoresSafeArea()
             } else {
                 // 🔹 ОТЛАДКА: показываем статус если нет изображения
@@ -601,7 +602,29 @@ struct ContentView: View {
 
     private func updateOrientation() {
         let o = UIDevice.current.orientation
-        if o.isValidInterfaceOrientation { deviceOrientation = o }
+        if o.isValidInterfaceOrientation { 
+            deviceOrientation = o
+            
+            // 🔹 Вычисляем правильный угол поворота камеры в зависимости от ориентации
+            switch o {
+            case .portrait:
+                cameraRotation = 0
+                print("📱 Portrait: 0°")
+            case .portraitUpsideDown:
+                cameraRotation = 180
+                print("📱 Portrait Upside Down: 180°")
+            case .landscapeLeft:
+                // Провод слева, блок камеры справа - нужно -90 (или 270)
+                cameraRotation = 270
+                print("📱 Landscape Left (провод слева): 270°")
+            case .landscapeRight:
+                // Провод справа, блок камеры слева - нужно 180
+                cameraRotation = 180
+                print("📱 Landscape Right (провод справа): 180°")
+            default:
+                cameraRotation = 0
+            }
+        }
     }
 }
 

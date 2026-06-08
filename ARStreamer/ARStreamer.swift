@@ -336,15 +336,28 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             for value in values {
                 withUnsafeBytes(of: value) { data.append(contentsOf: $0) }
             }
+            
+            // 🔹 ЛОГИРОВАНИЕ IMU ДАННЫХ
+            if frameSequence <= 5 || frameSequence % 60 == 0 {
+                print("📊 IMU #\(frameSequence): Accel=(\(String(format: "%.2f", sensor.accelX)), \(String(format: "%.2f", sensor.accelY)), \(String(format: "%.2f", sensor.accelZ))) Gyro=(\(String(format: "%.2f", sensor.gyroX)), \(String(format: "%.2f", sensor.gyroY)), \(String(format: "%.2f", sensor.gyroZ)))")
+                logToFile("📊 IMU #\(frameSequence): Accel=(\(sensor.accelX), \(sensor.accelY), \(sensor.accelZ)) Gyro=(\(sensor.gyroX), \(sensor.gyroY), \(sensor.gyroZ))")
+            }
         } else {
             let zero: Double = 0.0
             for _ in 0..<12 {
                 withUnsafeBytes(of: zero) { data.append(contentsOf: $0) }
             }
+            
+            // 🔹 ЛОГИРОВАНИЕ ОТСУТСТВИЯ IMU ДАННЫХ
+            if frameSequence <= 5 || frameSequence % 60 == 0 {
+                print("⚠️ IMU #\(frameSequence): NO SENSOR DATA - sending zeros")
+                logToFile("⚠️ IMU #\(frameSequence): NO SENSOR DATA - sending zeros")
+            }
         }
         
         guard data.count == 104 else {
             print("Sensor data size error: \(data.count)")
+            logToFile("❌ Sensor data size error: \(data.count)")
             return
         }
         
