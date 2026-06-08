@@ -293,14 +293,15 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             let gyro = motion.rotationRateVec
             let gravity = motion.gravityVec
             let mag = motion.magneticFieldVec
-            
+            let gToMs2: Double = 9.80665
+
             self.lastSensorData = (
                 pitch: Float(euler.pitch),
                 yaw: Float(euler.yaw),
                 roll: Float(euler.roll),
-                accelX: Float(accel.x),
-                accelY: Float(accel.y),
-                accelZ: Float(accel.z),
+                accelX: Float(accel.x * gToMs2),
+                accelY: Float(accel.y * gToMs2),
+                accelZ: Float(accel.z * gToMs2),
                 gyroX: Float(gyro.x),
                 gyroY: Float(gyro.y),
                 gyroZ: Float(gyro.z),
