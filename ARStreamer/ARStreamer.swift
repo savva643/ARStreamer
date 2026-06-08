@@ -855,7 +855,20 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     
     func switchDisplayMode(_ mode: DisplayMode) {
         currentDisplayMode = mode
-        print("Display mode: \(mode)")
+        print("🔄 Display mode switched: \(mode)")
+        logToFile("🔄 Display mode switched: \(mode)")
+        
+        switch mode {
+        case .rgbOnly:
+            print("📸 Showing RGB only")
+            logToFile("📸 Showing RGB only")
+        case .depthOnly:
+            print("🎯 Showing LiDAR/Depth only")
+            logToFile("🎯 Showing LiDAR/Depth only")
+        case .both:
+            print("📊 Showing both RGB and LiDAR")
+            logToFile("📊 Showing both RGB and LiDAR")
+        }
     }
     
     @MainActor private func getServerHost() -> String? {

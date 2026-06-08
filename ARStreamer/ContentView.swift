@@ -205,12 +205,14 @@ struct ContentView: View {
                                     .resizable()
                                     .scaledToFill()
                                     .frame(width: proxy.size.width / 2, height: proxy.size.height)
+                                    .rotationEffect(.degrees(90))
                                     .clipped()
 
                                 Image(uiImage: depthPreview)
                                     .resizable()
                                     .scaledToFill()
                                     .frame(width: proxy.size.width / 2, height: proxy.size.height)
+                                    .rotationEffect(.degrees(90))
                                     .clipped()
                             }
                             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -244,6 +246,7 @@ struct ContentView: View {
                     Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
                         .resizable()
                         .scaledToFill()
+                        .rotationEffect(.degrees(deviceOrientation.isLandscape ? 90 : 0))
                         .ignoresSafeArea()
                 }
             } else if let preview = viewModel.previewImage {
@@ -251,6 +254,7 @@ struct ContentView: View {
                 Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
                     .resizable()
                     .scaledToFill()
+                    .rotationEffect(.degrees(deviceOrientation.isLandscape ? 90 : 0))
                     .ignoresSafeArea()
             } else {
                 // 🔹 ОТЛАДКА: показываем статус если нет изображения
