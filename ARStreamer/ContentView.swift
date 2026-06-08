@@ -304,6 +304,24 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity)
                 .animation(.easeInOut(duration: 0.3), value: showModeText)
             }
+            
+            // 🔹 ОТОБРАЖЕНИЕ IMU И ПОЗИЦИИ (верхний левый угол)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(viewModel.imuText)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.cyan)
+                    .lineLimit(1)
+                
+                Text(viewModel.positionText)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.green)
+                    .lineLimit(1)
+            }
+            .padding(8)
+            .background(Color.black.opacity(0.6))
+            .cornerRadius(6)
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             // 🔹 ОБЩИЙ GeometryReader ДЛЯ ВСЕХ ЭЛЕМЕНТОВ УПРАВЛЕНИЯ
             GeometryReader { geo in
@@ -613,13 +631,13 @@ struct ContentView: View {
                 cameraRotation = 180
                 print("📱 Portrait Upside Down: 180°")
             case .landscapeLeft:
-                // Провод слева - нужно 360 градусов
-                cameraRotation = 360
-                print("📱 Landscape Left (провод слева): 360°")
+                // Провод слева - нужно 270 градусов (или -90)
+                cameraRotation = 180
+                print("📱 Landscape Left (провод слева): 270°")
             case .landscapeRight:
-                // Провод справа - нужно 0 градусов
-                cameraRotation = 0
-                print("📱 Landscape Right (провод справа): 0°")
+                // Провод справа - нужно 90 градусов
+                cameraRotation = 180
+                print("📱 Landscape Right (провод справа): 90°")
             default:
                 cameraRotation = 0
             }

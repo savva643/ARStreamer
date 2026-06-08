@@ -42,6 +42,8 @@ class NetworkConnectViewModel: ObservableObject {
     @Published var localIPText: String = "—"
     @Published var serverIPText: String = "—"
     @Published var frameCount: Int = 0 // 🔹 НОВОЕ: счетчик фреймов для отслеживания
+    @Published var imuText: String = "IMU: —" // 🔹 НОВОЕ: отображение IMU данных
+    @Published var positionText: String = "Pos: —" // 🔹 НОВОЕ: отображение позиции
 
     @AppStorage("serverIP") var serverIP: String = "192.168.1.100"
     @AppStorage("serverPort") private var serverPort: String = "9000"
@@ -264,6 +266,14 @@ class NetworkConnectViewModel: ObservableObject {
             },
             usbManager: streamMode.uppercased() == "USB" ? usbManager : nil
         )
+        
+        // 🔹 ДОБАВИЛ: callback для обновления IMU и позиции
+        arStreamer?.imuUpdateCallback = { [weak self] imuStr, posStr in
+            Task { @MainActor in
+                self?.imuText = imuStr
+                self?.positionText = posStr
+            }
+        }
         
         logToFile("🎬 ARStreamer created, calling startStreaming()")
         statusText = "🎬 Запуск камеры..."

@@ -216,6 +216,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     
     private var lastDepthMap: CVPixelBuffer?
     private var lastConfidenceMap: CVPixelBuffer?
+    private var lastRGBImage: UIImage?  // 🔹 Сохраняем последний RGB frame для синхронизации
     private var lidarStreamEnabled: Bool = false
     private var lastLidarSentTime: TimeInterval = 0
     private var lidarFrameCount: Int = 0
@@ -243,6 +244,9 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     private var sensorInterval: TimeInterval {
         return 1.0 / Double(targetFPS)
     }
+    
+    // 🔹 НОВОЕ: callback для обновления IMU и позиции
+    var imuUpdateCallback: ((String, String) -> Void)?
     
     // MARK: - Initialization
     init(connection: NWConnection,
@@ -307,6 +311,15 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
                 magY: Float(mag.y),
                 magZ: Float(mag.z)
             )
+            
+            // 🔹 ОБНОВЛЯЕМ IMU И ПОЗИЦИЮ В UI (каждый 10-й кадр)
+            if self.frameSequence % 10 == 0 {
+                let imuStr = String(format: "IMU: A(%.1f,%.1f,%.1f) G(%.1f,%.1f,%.1f)", 
+                    accel.x, accel.y, accel.z, gyro.x, gyro.y, gyro.z)
+                let posStr = String(format: "Rot: P%.0f° Y%.0f° R%.0f°", 
+                    euler.pitch * 180 / .pi, euler.yaw * 180 / .pi, euler.roll * 180 / .pi)
+                self.imuUpdateCallback?(imuStr, posStr)
+            }
         }
         
         print("Motion sensors active (60 Hz)")
@@ -617,10 +630,8 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         processFrame(pixelBuffer, uiImage: uiImage, depthImage: nil, frameSequence: frameSequence)
         updateStats()
         
-        // Preview callback
-        DispatchQueue.main.async { [weak self] in
-            self?.previewCallback(uiImage, nil)
-        }
+        // 🔹 СОХРАНЯЕМ RGB FRAME для синхронизации с depth в depthDataOutput
+        self.lastRGBImage = uiImage
         
         cleanupOldTimestamps(currentTime: now)
     }
@@ -644,7 +655,9 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         // 🔹 СОЗДАЕМ DEPTH IMAGE ДЛЯ PREVIEW
         if let depthImage = createDepthImage(from: depthData) {
             DispatchQueue.main.async { [weak self] in
-                self?.previewCallback(UIImage(), depthImage)
+                // 🔹 ОТПРАВЛЯЕМ ВМЕСТЕ RGB И DEPTH для синхронизации
+                let rgbImage = self?.lastRGBImage ?? UIImage()
+                self?.previewCallback(rgbImage, depthImage)
                 if self?.frameSequence ?? 0 <= 5 || self?.frameSequence ?? 0 % 60 == 0 {
                     print("✅ Depth image created and sent to preview: \(depthImage.size)")
                     logToFile("✅ Depth image created and sent to preview: \(depthImage.size)")
@@ -666,7 +679,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         lidarBytesSent += depthSize + pointCloudSize + confidenceSize
     }
     
-    // 🔹 НОВЫЙ МЕТОД: создание UIImage из depth данных
+    // 🔹 НОВЫЙ МЕТОД: создание UIImage из depth данных с улучшенной визуализацией
     private func createDepthImage(from depthData: AVDepthData) -> UIImage? {
         let depthMap = depthData.depthDataMap
         let width = CVPixelBufferGetWidth(depthMap)
@@ -678,6 +691,31 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
         let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
         
+        // 🔹 УЛУЧШЕННАЯ ВИЗУАЛИЗАЦИЯ: находим min/max для автоматического масштабирования
+        var minDepth: Float32 = Float32.infinity
+        var maxDepth: Float32 = 0
+        
+        for y in 0..<height {
+            for x in 0..<width {
+                let byteIndex = y * bytesPerRow + x * MemoryLayout<Float32>.size
+                let depthPtr = baseAddress.advanced(by: byteIndex)
+                let depth = depthPtr.load(as: Float32.self)
+                
+                if depth > 0 {  // Игнорируем нулевые значения
+                    minDepth = min(minDepth, depth)
+                    maxDepth = max(maxDepth, depth)
+                }
+            }
+        }
+        
+        // Если нет валидных значений, используем значения по умолчанию
+        if minDepth == Float32.infinity {
+            minDepth = 0.1
+            maxDepth = 5.0
+        }
+        
+        let depthRange = maxDepth - minDepth
+        
         // Создаем RGB изображение из depth данных (визуализация)
         var rgbData = [UInt8](repeating: 0, count: width * height * 3)
         
@@ -687,14 +725,33 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
                 let depthPtr = baseAddress.advanced(by: byteIndex)
                 let depth = depthPtr.load(as: Float32.self)
                 
-                // Нормализуем глубину в диапазон 0-255
-                let normalizedDepth = min(max(depth * 100, 0), 255) // Масштабируем для видимости
-                let grayValue = UInt8(normalizedDepth)
-                
                 let pixelIndex = (y * width + x) * 3
-                rgbData[pixelIndex] = grayValue     // R
-                rgbData[pixelIndex + 1] = grayValue // G
-                rgbData[pixelIndex + 2] = grayValue // B
+                
+                if depth <= 0 {
+                    // Черный для недействительных пикселей
+                    rgbData[pixelIndex] = 0
+                    rgbData[pixelIndex + 1] = 0
+                    rgbData[pixelIndex + 2] = 0
+                } else {
+                    // Нормализуем глубину в диапазон 0-1
+                    let normalized = (depth - minDepth) / depthRange
+                    let normalized255 = UInt8(min(max(normalized * 255, 0), 255))
+                    
+                    // 🔹 ЦВЕТОВАЯ КАРТА: от синего (близко) к красному (далеко)
+                    if normalized < 0.5 {
+                        // Синий -> Зеленый
+                        let t = normalized * 2
+                        rgbData[pixelIndex] = 0                              // R
+                        rgbData[pixelIndex + 1] = UInt8(t * 255)           // G
+                        rgbData[pixelIndex + 2] = UInt8((1 - t) * 255)     // B
+                    } else {
+                        // Зеленый -> Красный
+                        let t = (normalized - 0.5) * 2
+                        rgbData[pixelIndex] = UInt8(t * 255)               // R
+                        rgbData[pixelIndex + 1] = UInt8((1 - t) * 255)     // G
+                        rgbData[pixelIndex + 2] = 0                         // B
+                    }
+                }
             }
         }
         
