@@ -631,6 +631,29 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         guard useLiDAR, now - lastLidarSentTime >= lidarFrameInterval else { return }
         lastLidarSentTime = now
         
+        let depthMap = depthData.depthDataMap
+        let width = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
+        
+        // 🔹 ЛОГИРОВАНИЕ DEPTH ДАННЫХ
+        if frameSequence <= 5 || frameSequence % 60 == 0 {
+            print("🎯 [LIDAR] depthDataOutput: width=\(width), height=\(height), frameSequence=\(frameSequence)")
+            logToFile("🎯 [LIDAR] depthDataOutput: width=\(width), height=\(height), frameSequence=\(frameSequence)")
+        }
+        
+        // 🔹 СОЗДАЕМ DEPTH IMAGE ДЛЯ PREVIEW
+        if let depthImage = createDepthImage(from: depthData) {
+            DispatchQueue.main.async { [weak self] in
+                self?.previewCallback(UIImage(), depthImage)
+                if self?.frameSequence ?? 0 <= 5 || self?.frameSequence ?? 0 % 60 == 0 {
+                    print("✅ Depth image created and sent to preview: \(depthImage.size)")
+                    logToFile("✅ Depth image created and sent to preview: \(depthImage.size)")
+                }
+            }
+        } else {
+            logToFile("❌ Failed to create depth image from depthData")
+        }
+        
         sendLiDARData(depthData, frameSequence: frameSequence)
         sendPointCloudData(depthData, frameSequence: frameSequence)
         sendConfidenceMapData(depthData, frameSequence: frameSequence)
@@ -638,11 +661,54 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         
         // Count all LiDAR data sizes
         let depthSize = CVPixelBufferGetDataSize(depthData.depthDataMap)
-        let width = CVPixelBufferGetWidth(depthData.depthDataMap)
-        let height = CVPixelBufferGetHeight(depthData.depthDataMap)
         let confidenceSize = 8 + (width * height) // header + confidence bytes
         let pointCloudSize = 8 + depthSize // header + depth data
         lidarBytesSent += depthSize + pointCloudSize + confidenceSize
+    }
+    
+    // 🔹 НОВЫЙ МЕТОД: создание UIImage из depth данных
+    private func createDepthImage(from depthData: AVDepthData) -> UIImage? {
+        let depthMap = depthData.depthDataMap
+        let width = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
+        
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+        
+        guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
+        
+        // Создаем RGB изображение из depth данных (визуализация)
+        var rgbData = [UInt8](repeating: 0, count: width * height * 3)
+        
+        for y in 0..<height {
+            for x in 0..<width {
+                let byteIndex = y * bytesPerRow + x * MemoryLayout<Float32>.size
+                let depthPtr = baseAddress.advanced(by: byteIndex)
+                let depth = depthPtr.load(as: Float32.self)
+                
+                // Нормализуем глубину в диапазон 0-255
+                let normalizedDepth = min(max(depth * 100, 0), 255) // Масштабируем для видимости
+                let grayValue = UInt8(normalizedDepth)
+                
+                let pixelIndex = (y * width + x) * 3
+                rgbData[pixelIndex] = grayValue     // R
+                rgbData[pixelIndex + 1] = grayValue // G
+                rgbData[pixelIndex + 2] = grayValue // B
+            }
+        }
+        
+        // Создаем CGImage из RGB данных
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
+        
+        guard let dataProvider = CGDataProvider(data: Data(rgbData) as CFData) else { return nil }
+        guard let cgImage = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 24,
+                                     bytesPerRow: width * 3, space: colorSpace, bitmapInfo: bitmapInfo,
+                                     provider: dataProvider, decode: nil, shouldInterpolate: false,
+                                     intent: .defaultIntent) else { return nil }
+        
+        return UIImage(cgImage: cgImage)
     }
     
     // MARK: - Frame Processing

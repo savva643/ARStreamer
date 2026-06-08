@@ -613,13 +613,13 @@ struct ContentView: View {
                 cameraRotation = 180
                 print("📱 Portrait Upside Down: 180°")
             case .landscapeLeft:
-                // Провод слева, блок камеры справа - нужно -90 (или 270)
-                cameraRotation = 270
-                print("📱 Landscape Left (провод слева): 270°")
+                // Провод слева - нужно 360 градусов
+                cameraRotation = 360
+                print("📱 Landscape Left (провод слева): 360°")
             case .landscapeRight:
-                // Провод справа, блок камеры слева - нужно 90
-                cameraRotation = 90
-                print("📱 Landscape Right (провод справа): 90°")
+                // Провод справа - нужно 0 градусов
+                cameraRotation = 0
+                print("📱 Landscape Right (провод справа): 0°")
             default:
                 cameraRotation = 0
             }
