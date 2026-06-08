@@ -633,6 +633,14 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         // 🔹 СОХРАНЯЕМ RGB FRAME для синхронизации с depth в depthDataOutput
         self.lastRGBImage = uiImage
         
+        // 🔹 ОТПРАВЛЯЕМ PREVIEW: если LiDAR выключен или режим rgbOnly - отправляем сразу
+        // если LiDAR включен - отправка будет из depthDataOutput
+        if !self.useLiDAR || self.currentDisplayMode == .rgbOnly {
+            DispatchQueue.main.async { [weak self] in
+                self?.previewCallback(uiImage, nil)
+            }
+        }
+        
         cleanupOldTimestamps(currentTime: now)
     }
     
