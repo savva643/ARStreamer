@@ -700,11 +700,15 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         lidarBytesSent += depthSize + pointCloudSize + confidenceSize
     }
     
-    // 🔹 НОВЫЙ МЕТОД: создание UIImage из depth данных с улучшенной визуализацией
+    // 🔹 НОВЫЙ МЕТОД: создание UIImage из depth данных с поддержкой Float16 и Float32
     private func createDepthImage(from depthData: AVDepthData) -> UIImage? {
         let depthMap = depthData.depthDataMap
         let width = CVPixelBufferGetWidth(depthMap)
         let height = CVPixelBufferGetHeight(depthMap)
+        let pixelFormat = CVPixelBufferGetPixelFormatType(depthMap)
+        
+        print("📐 Depth map: \(width)x\(height), format: \(pixelFormat)")
+        logToFile("📐 Depth map: \(width)x\(height), format: \(pixelFormat)")
         
         CVPixelBufferLockBaseAddress(depthMap, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
@@ -712,81 +716,141 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
         let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
         
-        // 🔹 УЛУЧШЕННАЯ ВИЗУАЛИЗАЦИЯ: находим min/max для автоматического масштабирования
-        var minDepth: Float32 = Float32.infinity
-        var maxDepth: Float32 = 0
+        // Проверка формата – поддерживаем только Float32 и Float16
+        let isFloat16 = (pixelFormat == kCVPixelFormatType_DepthFloat16 ||
+                         pixelFormat == kCVPixelFormatType_DisparityFloat16)
+        let isFloat32 = (pixelFormat == kCVPixelFormatType_DepthFloat32 ||
+                         pixelFormat == kCVPixelFormatType_DisparityFloat32)
         
-        for y in 0..<height {
-            for x in 0..<width {
-                let byteIndex = y * bytesPerRow + x * MemoryLayout<Float32>.size
-                let depthPtr = baseAddress.advanced(by: byteIndex)
-                let depth = depthPtr.load(as: Float32.self)
-                
-                if depth > 0 {  // Игнорируем нулевые значения
-                    minDepth = min(minDepth, depth)
-                    maxDepth = max(maxDepth, depth)
-                }
+        guard isFloat16 || isFloat32 else {
+            print("❌ Unsupported depth format: \(pixelFormat)")
+            return nil
+        }
+        
+        // Вспомогательная функция конвертации Float16 -> Float32
+        func float16to32(_ f16: UInt16) -> Float {
+            let sign = (f16 >> 15) & 0x1
+            let exponent = (f16 >> 10) & 0x1F
+            let mantissa = f16 & 0x3FF
+            if exponent == 0 {
+                if mantissa == 0 { return 0.0 }
+                let value = Float(mantissa) / 1024.0 * powf(2, -14)
+                return sign == 0 ? value : -value
+            } else if exponent == 31 {
+                return mantissa == 0 ? (sign == 0 ? Float.infinity : -Float.infinity) : Float.nan
+            } else {
+                let value = powf(2, Float(exponent) - 15) * (1.0 + Float(mantissa) / 1024.0)
+                return sign == 0 ? value : -value
             }
         }
         
-        // Если нет валидных значений, используем значения по умолчанию
-        if minDepth == Float32.infinity {
-            minDepth = 0.1
-            maxDepth = 5.0
-        }
+        // Вычисляем минимум и максимум глубины для нормализации
+        var minDepth: Float = Float.infinity
+        var maxDepth: Float = -Float.infinity
+        var validCount = 0
         
-        let depthRange = maxDepth - minDepth
-        
-        // Создаем RGB изображение из depth данных (визуализация)
-        var rgbData = [UInt8](repeating: 0, count: width * height * 3)
-        
-        for y in 0..<height {
-            for x in 0..<width {
-                let byteIndex = y * bytesPerRow + x * MemoryLayout<Float32>.size
-                let depthPtr = baseAddress.advanced(by: byteIndex)
-                let depth = depthPtr.load(as: Float32.self)
-                
-                let pixelIndex = (y * width + x) * 3
-                
-                if depth <= 0 {
-                    // Черный для недействительных пикселей
-                    rgbData[pixelIndex] = 0
-                    rgbData[pixelIndex + 1] = 0
-                    rgbData[pixelIndex + 2] = 0
-                } else {
-                    // Нормализуем глубину в диапазон 0-1
-                    let normalized = (depth - minDepth) / depthRange
-                    let normalized255 = UInt8(min(max(normalized * 255, 0), 255))
-                    
-                    // 🔹 ЦВЕТОВАЯ КАРТА: от синего (близко) к красному (далеко)
-                    if normalized < 0.5 {
-                        // Синий -> Зеленый
-                        let t = normalized * 2
-                        rgbData[pixelIndex] = 0                              // R
-                        rgbData[pixelIndex + 1] = UInt8(t * 255)           // G
-                        rgbData[pixelIndex + 2] = UInt8((1 - t) * 255)     // B
-                    } else {
-                        // Зеленый -> Красный
-                        let t = (normalized - 0.5) * 2
-                        rgbData[pixelIndex] = UInt8(t * 255)               // R
-                        rgbData[pixelIndex + 1] = UInt8((1 - t) * 255)     // G
-                        rgbData[pixelIndex + 2] = 0                         // B
+        if isFloat32 {
+            let depthPtr = baseAddress.assumingMemoryBound(to: Float32.self)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let depth = depthPtr[y * (bytesPerRow / 4) + x]
+                    if depth > 0 && depth.isFinite {
+                        minDepth = min(minDepth, depth)
+                        maxDepth = max(maxDepth, depth)
+                        validCount += 1
+                    }
+                }
+            }
+        } else if isFloat16 {
+            let depthPtr = baseAddress.assumingMemoryBound(to: UInt16.self)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let f16 = depthPtr[y * (bytesPerRow / 2) + x]
+                    let f32 = float16to32(f16)
+                    if f32 > 0 && f32.isFinite {
+                        minDepth = min(minDepth, f32)
+                        maxDepth = max(maxDepth, f32)
+                        validCount += 1
                     }
                 }
             }
         }
         
-        // Создаем CGImage из RGB данных
+        if validCount == 0 {
+            minDepth = 0.1
+            maxDepth = 5.0
+        }
+        let range = maxDepth - minDepth
+        if range <= 0 { return nil }
+        
+        // Создаём RGB-изображение
+        var rgbData = [UInt8](repeating: 0, count: width * height * 3)
+        
+        if isFloat32 {
+            let depthPtr = baseAddress.assumingMemoryBound(to: Float32.self)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let depth = depthPtr[y * (bytesPerRow / 4) + x]
+                    let idx = (y * width + x) * 3
+                    if depth <= 0 || !depth.isFinite {
+                        rgbData[idx] = 0; rgbData[idx+1] = 0; rgbData[idx+2] = 0
+                    } else {
+                        let norm = (depth - minDepth) / range
+                        // Цветовая карта: синий->зелёный->красный
+                        if norm < 0.5 {
+                            let t = norm * 2
+                            rgbData[idx] = 0
+                            rgbData[idx+1] = UInt8(t * 255)
+                            rgbData[idx+2] = UInt8((1 - t) * 255)
+                        } else {
+                            let t = (norm - 0.5) * 2
+                            rgbData[idx] = UInt8(t * 255)
+                            rgbData[idx+1] = UInt8((1 - t) * 255)
+                            rgbData[idx+2] = 0
+                        }
+                    }
+                }
+            }
+        } else if isFloat16 {
+            let depthPtr = baseAddress.assumingMemoryBound(to: UInt16.self)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let f16 = depthPtr[y * (bytesPerRow / 2) + x]
+                    let f32 = float16to32(f16)
+                    let idx = (y * width + x) * 3
+                    if f32 <= 0 || !f32.isFinite {
+                        rgbData[idx] = 0; rgbData[idx+1] = 0; rgbData[idx+2] = 0
+                    } else {
+                        let norm = (f32 - minDepth) / range
+                        if norm < 0.5 {
+                            let t = norm * 2
+                            rgbData[idx] = 0
+                            rgbData[idx+1] = UInt8(t * 255)
+                            rgbData[idx+2] = UInt8((1 - t) * 255)
+                        } else {
+                            let t = (norm - 0.5) * 2
+                            rgbData[idx] = UInt8(t * 255)
+                            rgbData[idx+1] = UInt8((1 - t) * 255)
+                            rgbData[idx+2] = 0
+                        }
+                    }
+                }
+            }
+        }
+        
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
+        guard let provider = CGDataProvider(data: Data(rgbData) as CFData) else { return nil }
+        guard let cgImage = CGImage(width: width, height: height,
+                                    bitsPerComponent: 8, bitsPerPixel: 24,
+                                    bytesPerRow: width * 3,
+                                    space: colorSpace, bitmapInfo: bitmapInfo,
+                                    provider: provider, decode: nil, shouldInterpolate: false,
+                                    intent: .defaultIntent) else { return nil }
         
-        guard let dataProvider = CGDataProvider(data: Data(rgbData) as CFData) else { return nil }
-        guard let cgImage = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 24,
-                                     bytesPerRow: width * 3, space: colorSpace, bitmapInfo: bitmapInfo,
-                                     provider: dataProvider, decode: nil, shouldInterpolate: false,
-                                     intent: .defaultIntent) else { return nil }
-        
-        return UIImage(cgImage: cgImage)
+        let result = UIImage(cgImage: cgImage)
+        print("✅ Depth image created: \(result.size)")
+        return result
     }
     
     // MARK: - Frame Processing
