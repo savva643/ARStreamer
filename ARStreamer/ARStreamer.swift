@@ -655,12 +655,25 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         // 🔹 СОЗДАЕМ DEPTH IMAGE ДЛЯ PREVIEW
         if let depthImage = createDepthImage(from: depthData) {
             DispatchQueue.main.async { [weak self] in
-                // 🔹 ОТПРАВЛЯЕМ ВМЕСТЕ RGB И DEPTH для синхронизации
-                let rgbImage = self?.lastRGBImage ?? UIImage()
-                self?.previewCallback(rgbImage, depthImage)
-                if self?.frameSequence ?? 0 <= 5 || self?.frameSequence ?? 0 % 60 == 0 {
-                    print("✅ Depth image created and sent to preview: \(depthImage.size)")
-                    logToFile("✅ Depth image created and sent to preview: \(depthImage.size)")
+                guard let self = self else { return }
+                
+                // 🔹 ОТПРАВЛЯЕМ ТОЛЬКО НУЖНЫЕ ИЗОБРАЖЕНИЯ В ЗАВИСИМОСТИ ОТ РЕЖИМА
+                switch self.currentDisplayMode {
+                case .rgbOnly:
+                    // В режиме RGB только - не отправляем depth
+                    return
+                case .depthOnly:
+                    // В режиме LiDAR только - отправляем только depth
+                    self.previewCallback(UIImage(), depthImage)
+                case .both:
+                    // В режиме "оба" - отправляем оба изображения
+                    let rgbImage = self.lastRGBImage ?? UIImage()
+                    self.previewCallback(rgbImage, depthImage)
+                }
+                
+                if self.frameSequence <= 5 || self.frameSequence % 60 == 0 {
+                    print("✅ Depth image created and sent to preview: \(depthImage.size), mode=\(self.currentDisplayMode)")
+                    logToFile("✅ Depth image created and sent to preview: \(depthImage.size), mode=\(self.currentDisplayMode)")
                 }
             }
         } else {

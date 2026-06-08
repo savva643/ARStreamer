@@ -305,23 +305,6 @@ struct ContentView: View {
                 .animation(.easeInOut(duration: 0.3), value: showModeText)
             }
             
-            // 🔹 ОТОБРАЖЕНИЕ IMU И ПОЗИЦИИ (верхний левый угол)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(viewModel.imuText)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.cyan)
-                    .lineLimit(1)
-                
-                Text(viewModel.positionText)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.green)
-                    .lineLimit(1)
-            }
-            .padding(8)
-            .background(Color.black.opacity(0.6))
-            .cornerRadius(6)
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             // 🔹 ОБЩИЙ GeometryReader ДЛЯ ВСЕХ ЭЛЕМЕНТОВ УПРАВЛЕНИЯ
             GeometryReader { geo in
@@ -605,6 +588,15 @@ struct ContentView: View {
                 DebugRow(icon: "point.3.connected.trianglepath.dotted", title: "Тип подключения", value: viewModel.connectionType.uppercased())
                 DebugRow(icon: "scope", title: "LiDAR", value: useLiDAR ? "ВКЛ" : "ВЫКЛ")
                 DebugRow(icon: "camera", title: "Зеркало", value: mirrorPreview ? "ВКЛ" : "ВЫКЛ")
+            }
+            
+            Divider()
+                .background(Color.white.opacity(0.3))
+            
+            // 🔹 IMU И ПОЗИЦИЯ
+            Group {
+                DebugRow(icon: "gyroscope", title: "IMU", value: viewModel.imuText)
+                DebugRow(icon: "location.circle", title: "Позиция", value: viewModel.positionText)
             }
         }
         .padding(12)
