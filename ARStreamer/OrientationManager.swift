@@ -27,7 +27,7 @@ class OrientationManager: NSObject, ObservableObject {
             case .landscape:
                 return .landscapeRight
             case .portrait:
-                return .portraitUp
+                return .portrait
             }
         }
     }
@@ -42,12 +42,17 @@ class OrientationManager: NSObject, ObservableObject {
         AppDelegate.orientationLock = orientation.mask
         
         // Принудительно установить ориентацию
-        let orientation = orientation.preferredOrientation.rawValue
-        UIDevice.current.setValue(orientation, forKey: "orientation")
+        let orientationValue = orientation.preferredOrientation.rawValue
+        UIDevice.current.setValue(orientationValue, forKey: "orientation")
         
         // Уведомить систему
         AppDelegate.orientationLock = orientation.mask
-        UIViewController.attemptRotationToDeviceOrientation()
+        if #available(iOS 16.0, *) {
+            let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+            windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: orientation.mask))
+        } else {
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
         
         saveSettings()
     }

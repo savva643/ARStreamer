@@ -1191,7 +1191,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     // MARK: - Camera Intrinsics Transmission
     private func sendCameraIntrinsics() {
         // Get RGB camera intrinsics
-        let rgbIntrinsics = CameraCalibration.getRGBCameraIntrinsics(for: AVCaptureDevice.default(.builtInWideCamera, for: .video, position: .back)!)
+        let rgbIntrinsics = CameraCalibration.getRGBCameraIntrinsics(for: AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)!)
         let lidarIntrinsics = CameraCalibration.getLiDARCameraIntrinsics()
         
         // Format: [type=0x10][fx_rgb][fy_rgb][cx_rgb][cy_rgb][fx_lidar][fy_lidar][cx_lidar][cy_lidar]
