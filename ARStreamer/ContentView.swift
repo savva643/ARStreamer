@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = NetworkConnectViewModel()
+    @ObservedObject var orientationManager = OrientationManager.shared
     @State private var showDebug = false
     @State private var showInfoModal = false
     @State private var showSettings = false
@@ -14,6 +15,8 @@ struct ContentView: View {
     @State private var lastPreviewImageSize: CGSize = .zero
     @State private var cameraRotation: Double = 0 // 🔹 НОВОЕ: точная ориентация камеры (для UI preview)
     @State private var deviceOrientationAngle: Double = 0 // 🔹 НОВОЕ: угол ориентации для ARLauncher
+    @State private var showOrientationSelection = false
+    @State private var showCalibration = false
 
     // 🔹 НОВОЕ: Режимы отображения и временный текст
         @State private var displayMode: ARStreamer.DisplayMode = .rgbOnly
@@ -23,7 +26,16 @@ struct ContentView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                if isConnected {
+                // Проверяем, нужна ли калибровка
+                if !orientationManager.isCalibrated {
+                    if showOrientationSelection {
+                        OrientationSelectionView()
+                            .transition(.opacity)
+                    } else {
+                        CalibrationView()
+                            .transition(.opacity)
+                    }
+                } else if isConnected {
                     streamingView
                 } else if isConnecting {
                     connectingView
@@ -44,6 +56,11 @@ struct ContentView: View {
                 viewModel.fetchLocalIP()
                 updateOrientation()
                 useLiDAR = viewModel.sendDepth
+                
+                // Если не откалибровано, показываем выбор ориентации
+                if !orientationManager.isCalibrated {
+                    showOrientationSelection = true
+                }
             }
             .sheet(isPresented: $showInfoModal) {
                 InfoView()
@@ -168,7 +185,26 @@ struct ContentView: View {
                     .cornerRadius(12)
                 }
 
-                // 🔹 ИЗМЕНИЛ: кнопка "О приложении" вместо Debug
+                // 🔹 Кнопка смены ориентации/переквалибровки
+                Button(action: {
+                    orientationManager.resetCalibration()
+                    withAnimation {
+                        showOrientationSelection = true
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "iphone.landscape")
+                        Text("Сменить ориентацию")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.orange)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+
+                // 🔹 Кнопка "О приложении"
                 Button(action: { showAboutModal = true }) {
                     HStack {
                         Image(systemName: "app.badge")
