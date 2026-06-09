@@ -14,51 +14,48 @@ struct OrientationSelectionView: View {
             )
             .ignoresSafeArea()
             
-            HStack(spacing: 30) {
-                // Левая часть: Заголовок и описание
-                VStack(alignment: .leading, spacing: 20) {
+            VStack(spacing: 30) {
+                // Заголовок
+                VStack(spacing: 10) {
                     Image(systemName: "iphone.landscape")
-                        .font(.system(size: 60))
+                        .font(.system(size: 50))
                         .foregroundColor(.cyan)
                     
                     Text("Выбери ориентацию")
-                        .font(.title2)
-                        .bold()
+                        .font(.title)
                         .foregroundColor(.white)
                     
                     Text("Эта ориентация будет заблокирована на всё время использования приложения")
                         .font(.caption)
                         .foregroundColor(.yellow)
-                        .lineLimit(4)
-                    
-                    Spacer()
+                        .multilineTextAlignment(.center)
+                        .padding()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
                 
-                // Правая часть: Варианты ориентации
-                VStack(spacing: 15) {
+                Spacer()
+                
+                // Варианты ориентации
+                VStack(spacing: 20) {
                     ForEach(OrientationManager.AppOrientation.allCases, id: \.self) { orientation in
                         Button(action: {
                             orientationManager.setOrientation(orientation)
                         }) {
-                            HStack(spacing: 15) {
+                            HStack(spacing: 20) {
                                 // Иконка
                                 Image(systemName: orientation == .landscape ? "iphone.landscape" : "iphone")
-                                    .font(.system(size: 30))
+                                    .font(.system(size: 40))
                                     .foregroundColor(.white)
-                                    .frame(width: 40)
                                 
                                 // Текст
-                                VStack(alignment: .leading, spacing: 3) {
+                                VStack(alignment: .leading, spacing: 5) {
                                     Text(orientation.rawValue)
                                         .font(.headline)
                                         .foregroundColor(.white)
                                     
                                     Text(orientation == .landscape ?
-                                         "Рекомендуется" :
-                                         "Альтернативный")
-                                        .font(.caption2)
+                                         "Рекомендуется для AR" :
+                                         "Альтернативный режим")
+                                        .font(.caption)
                                         .foregroundColor(.gray)
                                 }
                                 
@@ -67,40 +64,39 @@ struct OrientationSelectionView: View {
                                 // Галочка если выбрана
                                 if orientationManager.selectedOrientation == orientation {
                                     Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 24))
+                                        .font(.system(size: 30))
                                         .foregroundColor(.green)
                                 }
                             }
-                            .padding(.horizontal, 15)
-                            .padding(.vertical, 12)
+                            .padding()
                             .background(
-                                RoundedRectangle(cornerRadius: 10)
+                                RoundedRectangle(cornerRadius: 12)
                                     .fill(orientationManager.selectedOrientation == orientation ?
-                                          Color.blue.opacity(0.4) :
+                                          Color.blue.opacity(0.3) :
                                           Color.gray.opacity(0.2))
                             )
                         }
                     }
-                    
-                    Spacer()
-                    
-                    // Кнопка подтверждения
-                    Button(action: {
-                        showWarning = true
-                    }) {
-                        HStack {
-                            Image(systemName: "lock.fill")
-                            Text("Заблокировать")
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                        .font(.headline)
-                    }
                 }
-                .frame(maxWidth: .infinity)
+                .padding()
+                
+                Spacer()
+                
+                // Кнопка подтверждения
+                Button(action: {
+                    showWarning = true
+                }) {
+                    HStack {
+                        Image(systemName: "lock.fill")
+                        Text("Заблокировать и продолжить")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                    .font(.headline)
+                }
                 .padding()
             }
             .padding()
