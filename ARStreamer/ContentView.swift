@@ -120,7 +120,8 @@ struct ContentView: View {
     
     // ВЕРТИКАЛЬНЫЙ МАКЕТ МЕНЮ
     private var menuVerticalLayout: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 0) {
+            // Верхние кнопки
             HStack {
                 Button(action: { showInfoModal = true }) {
                     Image(systemName: "info.circle")
@@ -138,212 +139,217 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             .padding(.top, 10)
+            .padding(.bottom, 10)
 
-            VStack(spacing: 8) {
-                Image(systemName: "camera.viewfinder")
-                    .font(.system(size: 60))
-                    .foregroundColor(.blue)
-                
-                Text("ARStreamer")
-                    .font(.largeTitle)
-                    .bold()
-                
-                Text("Трансляция AR в реальном времени")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.top, 20)
-
-            VStack(spacing: 12) {
-                HStack {
-                    Image(systemName: "wifi")
-                    Text("Локальный IP: \(viewModel.localIP ?? "—")")
-                    Spacer()
-                }
-                .foregroundColor(.secondary)
-                
-                HStack {
-                    Image(systemName: "info.circle")
-                    Text(viewModel.statusText)
-                    Spacer()
-                }
-                .foregroundColor(.gray)
-            }
-            .padding()
-            .background(Color.gray.opacity(0.1))
-            .cornerRadius(12)
-            .padding(.horizontal)
-
-            VStack(spacing: 12) {
-                Button(action: {
-                    isConnecting = true
-                    viewModel.start()
-                }) {
-                    HStack {
-                        Image(systemName: "play.circle.fill")
-                        Text("Начать трансляцию")
-                            .font(.headline)
+            // ScrollView для основного контента
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 24) {
+                    VStack(spacing: 8) {
+                        Image(systemName: "camera.viewfinder")
+                            .font(.system(size: 60))
+                            .foregroundColor(.blue)
+                        
+                        Text("ARStreamer")
+                            .font(.largeTitle)
+                            .bold()
+                        
+                        Text("Трансляция AR в реальном времени")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                     }
-                    .frame(maxWidth: .infinity)
+                    .padding(.top, 20)
+
+                    VStack(spacing: 12) {
+                        HStack {
+                            Image(systemName: "wifi")
+                            Text("Локальный IP: \(viewModel.localIP ?? "—")")
+                            Spacer()
+                        }
+                        .foregroundColor(.secondary)
+                        
+                        HStack {
+                            Image(systemName: "info.circle")
+                            Text(viewModel.statusText)
+                            Spacer()
+                        }
+                        .foregroundColor(.gray)
+                    }
                     .padding()
-                    .background(Color.blue)
-                    .foregroundColor(.white)
+                    .background(Color.gray.opacity(0.1))
                     .cornerRadius(12)
-                }
 
-                Button(action: {
-                    orientationManager.resetCalibration()
-                    withAnimation {
-                        showOrientationSelection = true
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "iphone.landscape")
-                        Text("Сменить ориентацию")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.orange)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
-                }
+                    VStack(spacing: 12) {
+                        Button(action: {
+                            isConnecting = true
+                            viewModel.start()
+                        }) {
+                            HStack {
+                                Image(systemName: "play.circle.fill")
+                                Text("Начать трансляцию")
+                                    .font(.headline)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                        }
 
-                Button(action: { showAboutModal = true }) {
-                    HStack {
-                        Image(systemName: "app.badge")
-                        Text("О приложении")
+                        Button(action: {
+                            orientationManager.resetCalibration()
+                            withAnimation {
+                                showOrientationSelection = true
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "iphone.landscape")
+                                Text("Сменить ориентацию")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(Color.orange)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                        }
+
+                        Button(action: { showAboutModal = true }) {
+                            HStack {
+                                Image(systemName: "app.badge")
+                                Text("О приложении")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.green)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
+                    .padding(.horizontal)
                 }
+                .padding()
             }
-            .padding(.horizontal)
-
-            Spacer()
         }
-        .padding()
     }
     
     // ГОРИЗОНТАЛЬНЫЙ МАКЕТ МЕНЮ
     private var menuHorizontalLayout: some View {
         HStack(spacing: 30) {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack {
-                    Button(action: { showInfoModal = true }) {
-                        Image(systemName: "info.circle")
-                            .font(.title3)
-                            .foregroundColor(.blue)
+            // Левая часть со ScrollView
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    HStack {
+                        Button(action: { showInfoModal = true }) {
+                            Image(systemName: "info.circle")
+                                .font(.title3)
+                                .foregroundColor(.blue)
+                        }
+                        
+                        Spacer()
+                        
+                        Button(action: { showSettings = true }) {
+                            Image(systemName: "gear")
+                                .font(.title3)
+                                .foregroundColor(.blue)
+                        }
                     }
                     
-                    Spacer()
-                    
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gear")
-                            .font(.title3)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: "camera.viewfinder")
+                            .font(.system(size: 50))
                             .foregroundColor(.blue)
+                        
+                        Text("ARStreamer")
+                            .font(.title2)
+                            .bold()
+                        
+                        Text("AR трансляция")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    Image(systemName: "camera.viewfinder")
-                        .font(.system(size: 50))
-                        .foregroundColor(.blue)
                     
-                    Text("ARStreamer")
-                        .font(.title2)
-                        .bold()
-                    
-                    Text("AR трансляция")
-                        .font(.caption)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "wifi")
+                                .font(.caption)
+                            Text("IP: \(viewModel.localIP ?? "—")")
+                                .font(.caption)
+                        }
                         .foregroundColor(.secondary)
-                }
-                
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "wifi")
-                            .font(.caption)
-                        Text("IP: \(viewModel.localIP ?? "—")")
-                            .font(.caption)
+                        
+                        HStack(spacing: 8) {
+                            Image(systemName: "info.circle")
+                                .font(.caption)
+                            Text(viewModel.statusText)
+                                .font(.caption)
+                        }
+                        .foregroundColor(.gray)
                     }
-                    .foregroundColor(.secondary)
-                    
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle")
-                            .font(.caption)
-                        Text(viewModel.statusText)
-                            .font(.caption)
-                    }
-                    .foregroundColor(.gray)
+                    .padding()
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(10)
                 }
                 .padding()
-                .background(Color.gray.opacity(0.1))
-                .cornerRadius(10)
-                
-                Spacer()
             }
             .frame(maxWidth: 280, alignment: .leading)
-            .padding()
             
-            VStack(spacing: 12) {
-                Button(action: {
-                    isConnecting = true
-                    viewModel.start()
-                }) {
-                    VStack(spacing: 8) {
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 28))
-                        Text("Начать")
-                            .font(.caption)
+            // Правая часть со ScrollView для кнопок
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 12) {
+                    Button(action: {
+                        isConnecting = true
+                        viewModel.start()
+                    }) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 28))
+                            Text("Начать")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
-                }
 
-                Button(action: {
-                    orientationManager.resetCalibration()
-                    withAnimation {
-                        showOrientationSelection = true
+                    Button(action: {
+                        orientationManager.resetCalibration()
+                        withAnimation {
+                            showOrientationSelection = true
+                        }
+                    }) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "iphone.landscape")
+                                .font(.system(size: 28))
+                            Text("Ориентация")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.orange)
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
                     }
-                }) {
-                    VStack(spacing: 8) {
-                        Image(systemName: "iphone.landscape")
-                            .font(.system(size: 28))
-                        Text("Ориентация")
-                            .font(.caption)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.orange)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
-                }
 
-                Button(action: { showAboutModal = true }) {
-                    VStack(spacing: 8) {
-                        Image(systemName: "app.badge")
-                            .font(.system(size: 28))
-                        Text("О приложении")
-                            .font(.caption)
+                    Button(action: { showAboutModal = true }) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "app.badge")
+                                .font(.system(size: 28))
+                            Text("О приложении")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.green)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
                 }
-                
-                Spacer()
+                .padding()
             }
             .frame(maxWidth: 150)
-            .padding()
         }
         .padding()
     }
