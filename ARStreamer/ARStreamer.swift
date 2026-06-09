@@ -273,6 +273,9 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         if streamMode == "TCP_H264" || streamMode == "UDP_H264" {
             setupH264Encoder()
         }
+        
+        // Send camera intrinsics to PC on startup
+        sendCameraIntrinsics()
     }
     
     // MARK: - Sensor Setup
@@ -445,20 +448,64 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     }
     
     // MARK: - Send LiDAR Data
+    // Отправляем плоский Float32 массив без padding — PC ожидает float массив
     private func sendLiDARData(_ depthData: AVDepthData, frameSequence: UInt64) {
         let depthMap = depthData.depthDataMap
-        
+
         CVPixelBufferLockBaseAddress(depthMap, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-        
+
         guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return }
+        let width = CVPixelBufferGetWidth(depthMap)
         let height = CVPixelBufferGetHeight(depthMap)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
-        
-        let dataSize = height * bytesPerRow
-        let rawData = Data(bytes: baseAddress, count: dataSize)
-        
-        sendData(rawData, frameSequence: frameSequence, dataType: 0x02)
+        let pixelFormat = CVPixelBufferGetPixelFormatType(depthMap)
+
+        let isFloat16 = (pixelFormat == kCVPixelFormatType_DepthFloat16 ||
+                         pixelFormat == kCVPixelFormatType_DisparityFloat16)
+        let isFloat32 = (pixelFormat == kCVPixelFormatType_DepthFloat32 ||
+                         pixelFormat == kCVPixelFormatType_DisparityFloat32)
+
+        // Конвертируем в плоский Float32 массив (PC ожидает float)
+        var float32Data = Data(count: width * height * MemoryLayout<Float32>.size)
+        float32Data.withUnsafeMutableBytes { rawBuffer in
+            guard let outPtr = rawBuffer.bindMemory(to: Float32.self).baseAddress else { return }
+            if isFloat32 {
+                let inPtr = baseAddress.assumingMemoryBound(to: Float32.self)
+                for y in 0..<height {
+                    for x in 0..<width {
+                        outPtr[y * width + x] = inPtr[y * (bytesPerRow / 4) + x]
+                    }
+                }
+            } else if isFloat16 {
+                let inPtr = baseAddress.assumingMemoryBound(to: UInt16.self)
+                for y in 0..<height {
+                    for x in 0..<width {
+                        let f16 = inPtr[y * (bytesPerRow / 2) + x]
+                        outPtr[y * width + x] = float16to32(f16)
+                    }
+                }
+            }
+        }
+
+        sendData(float32Data, frameSequence: frameSequence, dataType: 0x02)
+    }
+
+    // Конвертация Float16 -> Float32 (IEEE 754 half-precision)
+    private func float16to32(_ f16: UInt16) -> Float32 {
+        let sign = (f16 >> 15) & 0x1
+        let exponent = (f16 >> 10) & 0x1F
+        let mantissa = f16 & 0x3FF
+        if exponent == 0 {
+            if mantissa == 0 { return 0.0 }
+            let value = Float(mantissa) / 1024.0 * powf(2, -14)
+            return sign == 0 ? value : -value
+        } else if exponent == 31 {
+            return mantissa == 0 ? (sign == 0 ? Float.infinity : -Float.infinity) : Float.nan
+        } else {
+            let value = powf(2, Float(exponent) - 15) * (1.0 + Float(mantissa) / 1024.0)
+            return sign == 0 ? value : -value
+        }
     }
     
     // MARK: - Send Point Cloud (0x08)
@@ -1139,6 +1186,33 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             setupH264Encoder()
         }
         print("Switched to network mode: \(mode)")
+    }
+    
+    // MARK: - Camera Intrinsics Transmission
+    private func sendCameraIntrinsics() {
+        // Get RGB camera intrinsics
+        let rgbIntrinsics = CameraCalibration.getRGBCameraIntrinsics(for: AVCaptureDevice.default(.builtInWideCamera, for: .video, position: .back)!)
+        let lidarIntrinsics = CameraCalibration.getLiDARCameraIntrinsics()
+        
+        // Format: [type=0x10][fx_rgb][fy_rgb][cx_rgb][cy_rgb][fx_lidar][fy_lidar][cx_lidar][cy_lidar]
+        // Each value is 8 bytes (double)
+        var data = Data()
+        data.append(0x10) // Type: camera intrinsics
+        
+        // RGB intrinsics
+        data.append(contentsOf: withUnsafeBytes(of: rgbIntrinsics.fx) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: rgbIntrinsics.fy) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: rgbIntrinsics.cx) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: rgbIntrinsics.cy) { Data($0) })
+        
+        // LiDAR intrinsics
+        data.append(contentsOf: withUnsafeBytes(of: lidarIntrinsics.fx) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: lidarIntrinsics.fy) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: lidarIntrinsics.cx) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: lidarIntrinsics.cy) { Data($0) })
+        
+        sendData(data, frameSequence: 0, dataType: 0x10)
+        print("📡 Sent camera intrinsics to PC")
     }
     
     deinit {
