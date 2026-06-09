@@ -29,7 +29,7 @@ struct ContentView: View {
                 // Проверяем, нужна ли калибровка
                 if !orientationManager.isCalibrated {
                     if showOrientationSelection {
-                        OrientationSelectionView()
+                        OrientationSelectionView(showOrientationSelection: $showOrientationSelection)
                             .transition(.opacity)
                     } else {
                         CalibrationView()

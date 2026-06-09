@@ -3,6 +3,7 @@ import SwiftUI
 struct OrientationSelectionView: View {
     @ObservedObject var orientationManager = OrientationManager.shared
     @State private var showWarning = false
+    @Binding var showOrientationSelection: Bool
     
     var body: some View {
         ZStack {
@@ -27,6 +28,8 @@ struct OrientationSelectionView: View {
             Button("Отмена", role: .cancel) { }
             Button("Заблокировать", role: .destructive) {
                 orientationManager.lockOrientation()
+                // Закрываем выбор ориентации и переходим к калибровке
+                showOrientationSelection = false
             }
         } message: {
             Text("Ориентация будет заблокирована на \(orientationManager.selectedOrientation.rawValue).\n\nНЕ МЕНЯЙ ориентацию устройства во время использования приложения!")
@@ -207,5 +210,6 @@ struct OrientationSelectionView: View {
 }
 
 #Preview {
-    OrientationSelectionView()
+    @State var showOrientationSelection = true
+    return OrientationSelectionView(showOrientationSelection: $showOrientationSelection)
 }
