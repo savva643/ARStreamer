@@ -447,8 +447,9 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         }
     }
     
-    // MARK: - Send LiDAR Data
-    // Отправляем плоский Float32 массив без padding — PC ожидает float массив
+    // MARK: - Send LiDAR Data (0x02)
+    // Отправляем сырые depth данные с заголовком (width, height, format)
+    // Вся обработка в point cloud должна быть на PC!
     private func sendLiDARData(_ depthData: AVDepthData, frameSequence: UInt64) {
         let depthMap = depthData.depthDataMap
 
@@ -466,7 +467,20 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         let isFloat32 = (pixelFormat == kCVPixelFormatType_DepthFloat32 ||
                          pixelFormat == kCVPixelFormatType_DisparityFloat32)
 
-        // Конвертируем в плоский Float32 массив (PC ожидает float)
+        // Отправляем сырые данные с заголовком
+        var depthData = Data()
+        
+        // Заголовок: width(4) + height(4) + format(1) + reserved(3)
+        var w = UInt32(width).littleEndian
+        var h = UInt32(height).littleEndian
+        var format: UInt8 = isFloat32 ? 1 : 0  // 0=Float16, 1=Float32
+        
+        withUnsafeBytes(of: &w) { depthData.append(contentsOf: $0) }
+        withUnsafeBytes(of: &h) { depthData.append(contentsOf: $0) }
+        depthData.append(format)
+        depthData.append(contentsOf: [0, 0, 0])  // padding
+        
+        // Конвертируем в плоский Float32 массив (PC будет обрабатывать)
         var float32Data = Data(count: width * height * MemoryLayout<Float32>.size)
         float32Data.withUnsafeMutableBytes { rawBuffer in
             guard let outPtr = rawBuffer.bindMemory(to: Float32.self).baseAddress else { return }
@@ -487,8 +501,9 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
                 }
             }
         }
-
-        sendData(float32Data, frameSequence: frameSequence, dataType: 0x02)
+        
+        depthData.append(float32Data)
+        sendData(depthData, frameSequence: frameSequence, dataType: 0x02)
     }
 
     // Конвертация Float16 -> Float32 (IEEE 754 half-precision)
@@ -519,20 +534,84 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         
         guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return }
         let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
+        let pixelFormat = CVPixelBufferGetPixelFormatType(depthMap)
         
-        // Convert depth map to point cloud (simplified - XYZ for each pixel)
+        let isFloat16 = (pixelFormat == kCVPixelFormatType_DepthFloat16 ||
+                         pixelFormat == kCVPixelFormatType_DisparityFloat16)
+        let isFloat32 = (pixelFormat == kCVPixelFormatType_DepthFloat32 ||
+                         pixelFormat == kCVPixelFormatType_DisparityFloat32)
+        
+        // Convert depth map to point cloud with XYZ coordinates
         var pointCloudData = Data()
         
-        // Add header: width, height (4 bytes each)
-        var w = UInt32(width).bigEndian
-        var h = UInt32(height).bigEndian
+        // Add header: width, height, point count
+        var w = UInt32(width).littleEndian
+        var h = UInt32(height).littleEndian
         withUnsafeBytes(of: &w) { pointCloudData.append(contentsOf: $0) }
         withUnsafeBytes(of: &h) { pointCloudData.append(contentsOf: $0) }
         
-        // Add depth data as point cloud (can be processed by Lidar3DProcessor)
-        let dataSize = height * bytesPerRow
-        let rawData = Data(bytes: baseAddress, count: dataSize)
-        pointCloudData.append(rawData)
+        // Camera intrinsics for LiDAR (approximate)
+        // LiDAR FOV: ~70 degrees horizontal, ~55 degrees vertical
+        let fx = Float(width) / (2.0 * tan(70.0 * Float.pi / 360.0))  // focal length X
+        let fy = Float(height) / (2.0 * tan(55.0 * Float.pi / 360.0)) // focal length Y
+        let cx = Float(width) / 2.0   // principal point X
+        let cy = Float(height) / 2.0  // principal point Y
+        
+        // Add camera intrinsics
+        var fxVal = fx.bitPattern
+        var fyVal = fy.bitPattern
+        var cxVal = cx.bitPattern
+        var cyVal = cy.bitPattern
+        withUnsafeBytes(of: &fxVal) { pointCloudData.append(contentsOf: $0) }
+        withUnsafeBytes(of: &fyVal) { pointCloudData.append(contentsOf: $0) }
+        withUnsafeBytes(of: &cxVal) { pointCloudData.append(contentsOf: $0) }
+        withUnsafeBytes(of: &cyVal) { pointCloudData.append(contentsOf: $0) }
+        
+        // Convert depth map to XYZ point cloud
+        var pointCount: UInt32 = 0
+        var pointCountOffset = pointCloudData.count
+        withUnsafeBytes(of: &pointCount) { pointCloudData.append(contentsOf: $0) }
+        
+        // Generate point cloud
+        for y in 0..<height {
+            for x in 0..<width {
+                let byteIndex = y * bytesPerRow + x * (isFloat32 ? 4 : 2)
+                let depthPtr = baseAddress.advanced(by: byteIndex)
+                
+                var depth: Float32 = 0
+                if isFloat32 {
+                    depth = depthPtr.load(as: Float32.self)
+                } else if isFloat16 {
+                    let f16 = depthPtr.load(as: UInt16.self)
+                    depth = float16to32(f16)
+                }
+                
+                // Filter valid depths (0.1m to 5m)
+                if depth > 0.1 && depth < 5.0 {
+                    // Convert pixel to 3D point using camera intrinsics
+                    let px = Float(x)
+                    let py = Float(y)
+                    
+                    let X = (px - cx) * depth / fx
+                    let Y = (py - cy) * depth / fy
+                    let Z = depth
+                    
+                    // Append XYZ as floats
+                    var xVal = X.bitPattern
+                    var yVal = Y.bitPattern
+                    var zVal = Z.bitPattern
+                    withUnsafeBytes(of: &xVal) { pointCloudData.append(contentsOf: $0) }
+                    withUnsafeBytes(of: &yVal) { pointCloudData.append(contentsOf: $0) }
+                    withUnsafeBytes(of: &zVal) { pointCloudData.append(contentsOf: $0) }
+                    
+                    pointCount += 1
+                }
+            }
+        }
+        
+        // Update point count in header
+        pointCloudData.replaceSubrange(pointCountOffset..<pointCountOffset+4,
+                                       with: pointCount.littleEndian.withUnsafeBytes { Data($0) })
         
         sendData(pointCloudData, frameSequence: frameSequence, dataType: 0x08)
     }
