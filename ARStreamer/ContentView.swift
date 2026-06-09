@@ -422,85 +422,11 @@ struct ContentView: View {
                 }
             } else if let preview = viewModel.previewImage {
                 // Только RGB изображение доступно
-                ZStack {
-                    Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
-                        .resizable()
-                        .scaledToFill()
-                        .rotationEffect(.degrees(cameraRotation))
-                        .ignoresSafeArea()
-                    
-                    // 🔹 МИНИ LIDAR ИНДИКАТОР
-                    VStack {
-                        HStack {
-                            // Мини окно LiDAR
-                            if let depthPreview = viewModel.depthPreviewImage {
-                                VStack(spacing: 6) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "dot.radiowaves.left.and.right")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundColor(.cyan)
-                                        Text("LiDAR")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundColor(.cyan)
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.black.opacity(0.6))
-                                    .cornerRadius(6)
-                                    
-                                    Image(uiImage: depthPreview)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 120, height: 120)
-                                        .cornerRadius(8)
-                                        .border(Color.cyan, width: 2)
-                                }
-                                .padding(12)
-                                .background(Color.black.opacity(0.7))
-                                .cornerRadius(12)
-                                .padding(16)
-                            } else {
-                                // Пока нет LiDAR данных
-                                VStack(spacing: 8) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "dot.radiowaves.left.and.right")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundColor(.gray)
-                                        Text("LiDAR")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundColor(.gray)
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.black.opacity(0.6))
-                                    .cornerRadius(6)
-                                    
-                                    ZStack {
-                                        Color.gray.opacity(0.2)
-                                        VStack(spacing: 4) {
-                                            Image(systemName: "hourglass")
-                                                .font(.system(size: 20))
-                                                .foregroundColor(.gray)
-                                            Text("Ожидание...")
-                                                .font(.system(size: 9))
-                                                .foregroundColor(.gray)
-                                        }
-                                    }
-                                    .frame(width: 120, height: 120)
-                                    .cornerRadius(8)
-                                    .border(Color.gray.opacity(0.5), width: 2)
-                                }
-                                .padding(12)
-                                .background(Color.black.opacity(0.7))
-                                .cornerRadius(12)
-                                .padding(16)
-                            }
-                            
-                            Spacer()
-                        }
-                        Spacer()
-                    }
-                }
+                Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
+                    .resizable()
+                    .scaledToFill()
+                    .rotationEffect(.degrees(cameraRotation))
+                    .ignoresSafeArea()
             } else {
                 // 🔹 ОТЛАДКА: показываем статус если нет изображения
                 ZStack {
