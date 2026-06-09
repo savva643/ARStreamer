@@ -473,7 +473,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         // Заголовок: width(4) + height(4) + format(1) + reserved(3)
         var w = UInt32(width).littleEndian
         var h = UInt32(height).littleEndian
-        var format: UInt8 = isFloat32 ? 1 : 0  // 0=Float16, 1=Float32
+        let format: UInt8 = isFloat32 ? 1 : 0  // 0=Float16, 1=Float32
         
         withUnsafeBytes(of: &w) { depthData.append(contentsOf: $0) }
         withUnsafeBytes(of: &h) { depthData.append(contentsOf: $0) }
@@ -610,8 +610,10 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         }
         
         // Update point count in header
-        pointCloudData.replaceSubrange(pointCountOffset..<pointCountOffset+4,
-                                       with: pointCount.littleEndian.withUnsafeBytes { Data($0) })
+        var pointCountLE = pointCount.littleEndian
+        withUnsafeBytes(of: &pointCountLE) { bytes in
+            pointCloudData.replaceSubrange(pointCountOffset..<pointCountOffset+4, with: bytes)
+        }
         
         sendData(pointCloudData, frameSequence: frameSequence, dataType: 0x08)
     }
