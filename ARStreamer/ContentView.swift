@@ -235,27 +235,27 @@ struct ContentView: View {
     
     // ГОРИЗОНТАЛЬНЫЙ МАКЕТ МЕНЮ
     private var menuHorizontalLayout: some View {
-        HStack(spacing: 30) {
-            // Левая часть со ScrollView
+        HStack(spacing: 40) {
+            // Левая часть - ЦЕНТРИРОВАНА
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack {
+                VStack(alignment: .center, spacing: 20) {
+                    // Верхние кнопки
+                    HStack(spacing: 20) {
                         Button(action: { showInfoModal = true }) {
                             Image(systemName: "info.circle")
-                                .font(.title3)
+                                .font(.title2)
                                 .foregroundColor(.blue)
                         }
                         
-                        Spacer()
-                        
                         Button(action: { showSettings = true }) {
                             Image(systemName: "gear")
-                                .font(.title3)
+                                .font(.title2)
                                 .foregroundColor(.blue)
                         }
                     }
                     
-                    VStack(alignment: .leading, spacing: 8) {
+                    // Логотип и название
+                    VStack(alignment: .center, spacing: 8) {
                         Image(systemName: "camera.viewfinder")
                             .font(.system(size: 50))
                             .foregroundColor(.blue)
@@ -269,7 +269,8 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                     }
                     
-                    VStack(alignment: .leading, spacing: 10) {
+                    // Информация о подключении
+                    VStack(alignment: .center, spacing: 10) {
                         HStack(spacing: 8) {
                             Image(systemName: "wifi")
                                 .font(.caption)
@@ -289,67 +290,73 @@ struct ContentView: View {
                     .padding()
                     .background(Color.gray.opacity(0.1))
                     .cornerRadius(10)
+                    .frame(maxWidth: 200)
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding()
             }
-            .frame(maxWidth: 280, alignment: .leading)
+            .frame(maxWidth: 280)
             
-            // Правая часть со ScrollView для кнопок
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 12) {
-                    Button(action: {
-                        isConnecting = true
-                        viewModel.start()
-                    }) {
-                        VStack(spacing: 8) {
-                            Image(systemName: "play.circle.fill")
-                                .font(.system(size: 28))
-                            Text("Начать")
-                                .font(.caption)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
+            // Правая часть - КНОПКИ
+            VStack(spacing: 15) {
+                // Большая кнопка "Начать"
+                Button(action: {
+                    isConnecting = true
+                    viewModel.start()
+                }) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 24))
+                        Text("Начать трансляцию")
+                            .font(.headline)
                     }
-
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .padding(.horizontal, 20)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+                
+                // Две маленькие кнопки внизу
+                HStack(spacing: 12) {
                     Button(action: {
                         orientationManager.resetCalibration()
                         withAnimation {
                             showOrientationSelection = true
                         }
                     }) {
-                        VStack(spacing: 8) {
+                        VStack(spacing: 6) {
                             Image(systemName: "iphone.landscape")
-                                .font(.system(size: 28))
+                                .font(.system(size: 20))
                             Text("Ориентация")
-                                .font(.caption)
+                                .font(.caption2)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding()
+                        .padding(.vertical, 12)
                         .background(Color.orange)
                         .foregroundColor(.white)
-                        .cornerRadius(12)
+                        .cornerRadius(10)
                     }
 
                     Button(action: { showAboutModal = true }) {
-                        VStack(spacing: 8) {
+                        VStack(spacing: 6) {
                             Image(systemName: "app.badge")
-                                .font(.system(size: 28))
+                                .font(.system(size: 20))
                             Text("О приложении")
-                                .font(.caption)
+                                .font(.caption2)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding()
+                        .padding(.vertical, 12)
                         .background(Color.green)
                         .foregroundColor(.white)
-                        .cornerRadius(12)
+                        .cornerRadius(10)
                     }
                 }
-                .padding()
+                
+                Spacer()
             }
-            .frame(maxWidth: 150)
+            .padding()
         }
         .padding()
     }
@@ -415,11 +422,85 @@ struct ContentView: View {
                 }
             } else if let preview = viewModel.previewImage {
                 // Только RGB изображение доступно
-                Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
-                    .resizable()
-                    .scaledToFill()
-                    .rotationEffect(.degrees(cameraRotation))
-                    .ignoresSafeArea()
+                ZStack {
+                    Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
+                        .resizable()
+                        .scaledToFill()
+                        .rotationEffect(.degrees(cameraRotation))
+                        .ignoresSafeArea()
+                    
+                    // 🔹 МИНИ LIDAR ИНДИКАТОР
+                    VStack {
+                        HStack {
+                            // Мини окно LiDAR
+                            if let depthPreview = viewModel.depthPreviewImage {
+                                VStack(spacing: 6) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "dot.radiowaves.left.and.right")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(.cyan)
+                                        Text("LiDAR")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.cyan)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.black.opacity(0.6))
+                                    .cornerRadius(6)
+                                    
+                                    Image(uiImage: depthPreview)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 120, height: 120)
+                                        .cornerRadius(8)
+                                        .border(Color.cyan, width: 2)
+                                }
+                                .padding(12)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(12)
+                                .padding(16)
+                            } else {
+                                // Пока нет LiDAR данных
+                                VStack(spacing: 8) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "dot.radiowaves.left.and.right")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(.gray)
+                                        Text("LiDAR")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.gray)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.black.opacity(0.6))
+                                    .cornerRadius(6)
+                                    
+                                    ZStack {
+                                        Color.gray.opacity(0.2)
+                                        VStack(spacing: 4) {
+                                            Image(systemName: "hourglass")
+                                                .font(.system(size: 20))
+                                                .foregroundColor(.gray)
+                                            Text("Ожидание...")
+                                                .font(.system(size: 9))
+                                                .foregroundColor(.gray)
+                                        }
+                                    }
+                                    .frame(width: 120, height: 120)
+                                    .cornerRadius(8)
+                                    .border(Color.gray.opacity(0.5), width: 2)
+                                }
+                                .padding(12)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(12)
+                                .padding(16)
+                            }
+                            
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                }
             } else {
                 // 🔹 ОТЛАДКА: показываем статус если нет изображения
                 ZStack {

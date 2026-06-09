@@ -59,9 +59,23 @@ class OrientationManager: NSObject, ObservableObject {
     
     func lockOrientation() {
         isOrientationLocked = true
+        // Устанавливаем маску ориентации
         AppDelegate.orientationLock = selectedOrientation.mask
+        
+        // Принудительно устанавливаем текущую ориентацию
+        let orientationValue = selectedOrientation.preferredOrientation.rawValue
+        UIDevice.current.setValue(orientationValue, forKey: "orientation")
+        
+        // Запрашиваем обновление геометрии для iOS 16+
+        if #available(iOS 16.0, *) {
+            let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+            windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: selectedOrientation.mask))
+        } else {
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
+        
         saveSettings()
-        print("🔒 Ориентация заблокирована: \(selectedOrientation.rawValue)")
+        print("🔒 Ориентация полностью заблокирована: \(selectedOrientation.rawValue)")
     }
     
     func unlockOrientation() {
