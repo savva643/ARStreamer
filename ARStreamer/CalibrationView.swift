@@ -42,85 +42,106 @@ struct CalibrationView: View {
             // Фон
             Color.black.ignoresSafeArea()
             
-            VStack(spacing: 20) {
-                // Заголовок с ориентацией
-                VStack(spacing: 5) {
-                    Text("Калибровка камеры")
-                        .font(.title)
-                        .foregroundColor(.white)
-                    
-                    HStack {
-                        Image(systemName: orientationManager.selectedOrientation == .landscape ? "iphone.landscape" : "iphone")
-                            .foregroundColor(.cyan)
-                        Text(orientationManager.selectedOrientation.rawValue)
-                            .foregroundColor(.cyan)
-                            .font(.caption)
-                    }
-                }
-                .padding()
-                
-                // Прогресс
-                ProgressView(value: Double(calibrationStep), total: 5.0)
-                    .tint(.blue)
-                    .padding()
-                
-                // Текущий шаг
-                Text(steps[calibrationStep])
-                    .font(.headline)
-                    .foregroundColor(.cyan)
-                    .padding()
-                
-                // Инструкции
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("📋 Инструкции:")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                    
-                    Text(instructions[calibrationStep])
-                        .font(.body)
-                        .foregroundColor(.white)
-                        .lineLimit(nil)
-                }
-                .padding()
-                .background(Color.gray.opacity(0.2))
-                .cornerRadius(10)
-                
-                // Статус
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundColor(.yellow)
-                    .padding()
-                
-                // Диаграмма ориентации
-                OrientationDiagramView(step: calibrationStep)
-                    .frame(height: 150)
-                    .padding()
-                
-                Spacer()
-                
-                // Кнопки
-                HStack(spacing: 15) {
-                    if calibrationStep > 0 {
-                        Button(action: { calibrationStep -= 1 }) {
-                            Text("← Назад")
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.gray)
-                                .foregroundColor(.white)
-                                .cornerRadius(8)
+            HStack(spacing: 20) {
+                // Левая часть: Инструкции и прогресс
+                VStack(spacing: 15) {
+                    // Заголовок
+                    VStack(spacing: 5) {
+                        Text("Калибровка")
+                            .font(.title2)
+                            .bold()
+                            .foregroundColor(.white)
+                        
+                        HStack {
+                            Image(systemName: orientationManager.selectedOrientation == .landscape ? "iphone.landscape" : "iphone")
+                                .foregroundColor(.cyan)
+                                .font(.system(size: 16))
+                            Text(orientationManager.selectedOrientation.rawValue)
+                                .foregroundColor(.cyan)
+                                .font(.caption2)
                         }
                     }
                     
-                    Button(action: nextStep) {
-                        Text(calibrationStep < 4 ? "Далее →" : "Завершить ✓")
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.blue)
+                    // Прогресс
+                    VStack(spacing: 5) {
+                        Text("Шаг \(calibrationStep + 1) из 5")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        ProgressView(value: Double(calibrationStep), total: 5.0)
+                            .tint(.blue)
+                    }
+                    
+                    // Текущий шаг
+                    Text(steps[calibrationStep])
+                        .font(.headline)
+                        .foregroundColor(.cyan)
+                    
+                    // Инструкции
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("📋 Инструкции:")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
+                        Text(instructions[calibrationStep])
+                            .font(.caption)
                             .foregroundColor(.white)
-                            .cornerRadius(8)
+                            .lineLimit(5)
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.2))
+                    .cornerRadius(8)
+                    
+                    // Статус
+                    Text(statusMessage)
+                        .font(.caption2)
+                        .foregroundColor(.yellow)
+                    
+                    Spacer()
+                    
+                    // Кнопки
+                    VStack(spacing: 10) {
+                        if calibrationStep > 0 {
+                            Button(action: { calibrationStep -= 1 }) {
+                                Text("← Назад")
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(Color.gray)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(8)
+                                    .font(.caption)
+                            }
+                        }
+                        
+                        Button(action: nextStep) {
+                            Text(calibrationStep < 4 ? "Далее →" : "Завершить ✓")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                                .font(.caption)
+                        }
                     }
                 }
                 .padding()
+                .frame(maxWidth: 300)
+                
+                // Правая часть: Диаграмма
+                VStack {
+                    Text("Положение iPhone")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    OrientationDiagramView(step: calibrationStep)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    
+                    Text("Поворачивай на \(calibrationStep * 90)°")
+                        .font(.caption2)
+                        .foregroundColor(.cyan)
+                }
+                .padding()
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(10)
             }
             .padding()
         }

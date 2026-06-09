@@ -76,107 +76,189 @@ struct ContentView: View {
 
     // 🔹 ЭКРАН ПОДКЛЮЧЕНИЯ
     private var connectingView: some View {
-        VStack(spacing: 30) {
-            Spacer()
-            
-            ProgressView()
-                .scaleEffect(2.0)
+        HStack(spacing: 40) {
+            // Левая часть: Статус подключения
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Подключение к PC...")
+                    .font(.title2)
+                    .bold()
+                    .foregroundColor(.white)
+                
+                VStack(alignment: .leading, spacing: 15) {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Инициализация")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.caption)
+                        Text("Отправка intrinsics")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    HStack(spacing: 12) {
+                        Image(systemName: "hourglass")
+                            .foregroundColor(.yellow)
+                            .font(.caption)
+                        Text("Ожидание ответа PC")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                }
                 .padding()
-            
-            Text("Подключение...")
-                .font(.title2)
-                .foregroundColor(.primary)
-            
-            Text(viewModel.statusText)
-                .font(.body)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            
-            Button("Отменить") {
-                viewModel.disconnect()
-                isConnecting = false
-                isConnected = false
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(10)
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Статус:")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    Text(viewModel.statusText)
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .lineLimit(3)
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    viewModel.disconnect()
+                    isConnecting = false
+                    isConnected = false
+                }) {
+                    HStack {
+                        Image(systemName: "xmark.circle.fill")
+                        Text("Отменить")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.red)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+                    .font(.caption)
+                }
             }
-            .buttonStyle(.bordered)
-            .foregroundColor(.red)
+            .frame(maxWidth: 300)
+            .padding()
             
-            Spacer()
+            // Правая часть: Превью камеры
+            VStack(spacing: 15) {
+                Text("Превью камеры")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                
+                if let preview = viewModel.previewImage {
+                    Image(uiImage: preview)
+                        .resizable()
+                        .scaledToFit()
+                        .cornerRadius(10)
+                } else {
+                    ZStack {
+                        Color.gray.opacity(0.2)
+                        VStack(spacing: 10) {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(.gray)
+                            Text("Ожидание кадра...")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    .cornerRadius(10)
+                }
+                
+                Text("Ориентация заблокирована")
+                    .font(.caption2)
+                    .foregroundColor(.cyan)
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
         }
         .padding()
     }
 
     // 🔹 ГЛАВНОЕ МЕНЮ
     private var mainMenuView: some View {
-        VStack(spacing: 24) {
-            // 🔹 КНОПКИ НАВЕРХУ В УГЛАХ
-            HStack {
-                // Info кнопка слева
-                Button(action: { showInfoModal = true }) {
-                    Image(systemName: "info.circle")
-                        .font(.title2)
-                        .foregroundColor(.blue)
+        HStack(spacing: 30) {
+            // Левая часть: Заголовок и информация
+            VStack(alignment: .leading, spacing: 20) {
+                // Кнопки наверху
+                HStack {
+                    Button(action: { showInfoModal = true }) {
+                        Image(systemName: "info.circle")
+                            .font(.title3)
+                            .foregroundColor(.blue)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: { showSettings = true }) {
+                        Image(systemName: "gear")
+                            .font(.title3)
+                            .foregroundColor(.blue)
+                    }
                 }
+                
+                // Заголовок
+                VStack(alignment: .leading, spacing: 8) {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 50))
+                        .foregroundColor(.blue)
+                    
+                    Text("ARStreamer")
+                        .font(.title2)
+                        .bold()
+                    
+                    Text("AR трансляция")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                // Информация о подключении
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wifi")
+                            .font(.caption)
+                        Text("IP: \(viewModel.localIP ?? "—")")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.secondary)
+                    
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .font(.caption)
+                        Text(viewModel.statusText)
+                            .font(.caption)
+                    }
+                    .foregroundColor(.gray)
+                }
+                .padding()
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(10)
                 
                 Spacer()
-                
-                // Настройки кнопка справа
-                Button(action: { showSettings = true }) {
-                    Image(systemName: "gear")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                }
             }
-            .padding(.horizontal)
-            .padding(.top, 10)
-
-            // Заголовок
-            VStack(spacing: 8) {
-                Image(systemName: "camera.viewfinder")
-                    .font(.system(size: 60))
-                    .foregroundColor(.blue)
-                
-                Text("ARStreamer")
-                    .font(.largeTitle)
-                    .bold()
-                
-                Text("Трансляция AR в реальном времени")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.top, 20)
-
-            // Информация о подключении
-            VStack(spacing: 12) {
-                HStack {
-                    Image(systemName: "wifi")
-                    Text("Локальный IP: \(viewModel.localIP ?? "—")")
-                    Spacer()
-                }
-                .foregroundColor(.secondary)
-                
-                HStack {
-                    Image(systemName: "info.circle")
-                    Text(viewModel.statusText)
-                    Spacer()
-                }
-                .foregroundColor(.gray)
-            }
+            .frame(maxWidth: 280, alignment: .leading)
             .padding()
-            .background(Color.gray.opacity(0.1))
-            .cornerRadius(12)
-            .padding(.horizontal)
-
-            // Основные кнопки
+            
+            // Правая часть: Кнопки
             VStack(spacing: 12) {
                 Button(action: {
                     isConnecting = true
                     print("🎬 Connect button tapped - isConnecting = true")
                     viewModel.start()
                 }) {
-                    HStack {
+                    VStack(spacing: 8) {
                         Image(systemName: "play.circle.fill")
-                        Text("Начать трансляцию")
-                            .font(.headline)
+                            .font(.system(size: 28))
+                        Text("Начать")
+                            .font(.caption)
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
@@ -185,44 +267,43 @@ struct ContentView: View {
                     .cornerRadius(12)
                 }
 
-                // 🔹 Кнопка смены ориентации/переквалибровки
                 Button(action: {
                     orientationManager.resetCalibration()
                     withAnimation {
                         showOrientationSelection = true
                     }
                 }) {
-                    HStack {
+                    VStack(spacing: 8) {
                         Image(systemName: "iphone.landscape")
-                        Text("Сменить ориентацию")
+                            .font(.system(size: 28))
+                        Text("Ориентация")
+                            .font(.caption)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .padding()
                     .background(Color.orange)
                     .foregroundColor(.white)
                     .cornerRadius(12)
                 }
 
-                // 🔹 Кнопка "О приложении"
                 Button(action: { showAboutModal = true }) {
-                    HStack {
+                    VStack(spacing: 8) {
                         Image(systemName: "app.badge")
+                            .font(.system(size: 28))
                         Text("О приложении")
+                            .font(.caption)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .padding()
                     .background(Color.green)
                     .foregroundColor(.white)
                     .cornerRadius(12)
                 }
+                
+                Spacer()
             }
-            .padding(.horizontal)
-
-            Spacer()
-
-            // 🔹 УБРАЛ debug панель из главного меню
+            .frame(maxWidth: 150)
+            .padding()
         }
         .padding()
     }
