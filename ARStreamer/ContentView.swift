@@ -786,6 +786,7 @@ struct ContentView: View {
             deviceOrientation = o
 
             // 🔹 Вычисляем правильный угол поворота камеры в зависимости от ориентации
+            // Важно: deviceOrientationAngle отправляется на PC для компенсации гироскопа
             switch o {
             case .portrait:
                 cameraRotation = 0
@@ -796,15 +797,15 @@ struct ContentView: View {
                 deviceOrientationAngle = 180
                 print("📱 Portrait Upside Down: preview 0°, device 180°")
             case .landscapeLeft:
-                // Провод слева
+                // Провод слева - iPhone повёрнут на 270° (или -90°)
                 cameraRotation = 180
                 deviceOrientationAngle = 270
-                print("📱 Landscape Left (провод слева): preview 90°, device 270°")
+                print("📱 Landscape Left (провод слева): device 270°")
             case .landscapeRight:
-                // Провод справа
+                // Провод справа - iPhone повёрнут на 90°
                 cameraRotation = 180
                 deviceOrientationAngle = 90
-                print("📱 Landscape Right (провод справа): preview 270°, device 90°")
+                print("📱 Landscape Right (провод справа): device 90°")
             default:
                 cameraRotation = 180
                 deviceOrientationAngle = 0

@@ -292,19 +292,18 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             guard let self = self, let motion = motion else { return }
             
             let euler = motion.eulerAngles
-            let accel = motion.userAccel
+            let accel = motion.userAccel  // 🔹 userAcceleration уже в m/s² (БЕЗ гравитации)
             let gyro = motion.rotationRateVec
             let gravity = motion.gravityVec
             let mag = motion.magneticFieldVec
-            let gToMs2: Double = 9.80665
 
             self.lastSensorData = (
                 pitch: Float(euler.pitch),
                 yaw: Float(euler.yaw),
                 roll: Float(euler.roll),
-                accelX: Float(accel.x * gToMs2),
-                accelY: Float(accel.y * gToMs2),
-                accelZ: Float(accel.z * gToMs2),
+                accelX: Float(accel.x),  // 🔹 ИСПРАВЛЕНО: userAcceleration уже в m/s²
+                accelY: Float(accel.y),  // 🔹 НЕ умножаем на gToMs2!
+                accelZ: Float(accel.z),  // 🔹 Это была ошибка
                 gyroX: Float(gyro.x),
                 gyroY: Float(gyro.y),
                 gyroZ: Float(gyro.z),
