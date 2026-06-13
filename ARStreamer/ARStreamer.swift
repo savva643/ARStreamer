@@ -341,7 +341,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         var timestampVar = timestamp
         withUnsafeBytes(of: &timestampVar) { data.append(contentsOf: $0) }
         
-        // 2-5. IMU Data (12 x Double = 96 bytes) - accel, gyro, gravity, mag
+        // 2. IMU Data (12 x Double = 96 bytes) - accel, gyro, gravity, mag
         if let sensor = lastSensorData {
             let values: [Double] = [
                 Double(sensor.accelX), Double(sensor.accelY), Double(sensor.accelZ),
@@ -352,6 +352,20 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             for value in values {
                 withUnsafeBytes(of: value) { data.append(contentsOf: $0) }
             }
+            
+            // 3. Euler angles (3 x Double = 24 bytes) - pitch, yaw, roll from CMDeviceMotion
+            let eulerValues: [Double] = [
+                Double(sensor.pitch), Double(sensor.yaw), Double(sensor.roll)
+            ]
+            for value in eulerValues {
+                withUnsafeBytes(of: value) { data.append(contentsOf: $0) }
+            }
+        } else {
+            for _ in 0..<15 {
+                let zero: Double = 0.0
+                withUnsafeBytes(of: zero) { data.append(contentsOf: $0) }
+            }
+        }
             
             // 🔹 ЛОГИРОВАНИЕ IMU ДАННЫХ
             if frameSequence <= 5 || frameSequence % 60 == 0 {
@@ -371,7 +385,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             }
         }
         
-        guard data.count == 104 else {
+        guard data.count == 128 else {
             print("Sensor data size error: \(data.count)")
             logToFile("❌ Sensor data size error: \(data.count)")
             return
