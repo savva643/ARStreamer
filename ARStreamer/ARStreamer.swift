@@ -4,1312 +4,599 @@ import Network
 import UIKit
 import VideoToolbox
 import CoreMedia
-import CoreMotion
+import CoreImage
 import CoreVideo
+import ImageIO
 
-// 🔹 logToFile функция определена в NetworkConnectViewModel.swift
+// MARK: - Настройки потока
 
-// MARK: - Extensions
-extension CMDeviceMotion {
-    var eulerAngles: (pitch: Double, yaw: Double, roll: Double) {
-        let attitude = self.attitude
-        return (attitude.pitch, attitude.yaw, attitude.roll)
-    }
-    
-    var userAccel: (x: Double, y: Double, z: Double) {
-        return (userAcceleration.x, userAcceleration.y, userAcceleration.z)
-    }
-    
-    var gravityVec: (x: Double, y: Double, z: Double) {
-        return (gravity.x, gravity.y, gravity.z)
-    }
-    
-    var rotationRateVec: (x: Double, y: Double, z: Double) {
-        return (rotationRate.x, rotationRate.y, rotationRate.z)
-    }
-    
-    var magneticFieldVec: (x: Double, y: Double, z: Double) {
-        return (magneticField.field.x, magneticField.field.y, magneticField.field.z)
-    }
-}
+struct StreamSettings {
+    /// "USB", "TCP_H264" (Wi-Fi), "TCP_JPEG" (отладка)
+    var streamMode: String = "USB"
+    /// "H264" или "HEVC"
+    var codec: String = "H264"
+    /// "4K", "1440p", "1080p", "720p"
+    var resolution: String = "1440p"
+    var targetFPS: Int = 60
+    var bitrateMbps: Int = 30
+    var useLiDAR: Bool = false
+    var jpegQuality: CGFloat = 0.8
 
-extension Float {
-    func fixed(_ digits: Int) -> String {
-        return String(format: "% .\(digits)f", self)
-    }
-}
-
-// MARK: - Camera Data Structure
-struct CameraData {
-    var transform: simd_float4x4 = matrix_identity_float4x4
-    var intrinsics: simd_float3x3 = matrix_identity_float3x3
-    var imageResolution: CGSize = CGSize(width: 1920, height: 1080)
-    var timestamp: TimeInterval = 0
-}
-
-// MARK: - LiDAR Depth Manager
-class LiDARDepthManager: NSObject {
-    private var captureSession: AVCaptureSession?
-    private var depthOutput: AVCaptureDepthDataOutput?
-    private var videoOutput: AVCaptureVideoDataOutput?
-    
-    var depthDataCallback: ((AVDepthData) -> Void)?
-    var videoDataCallback: ((CVPixelBuffer) -> Void)?
-    
-    func startSession() {
-        logToFile("🎥 LiDARDepthManager.startSession() called")
-        captureSession = AVCaptureSession()
-        guard let session = captureSession else { 
-            logToFile("❌ Failed to create AVCaptureSession")
-            return 
+    var preferredDimensions: (width: Int32, height: Int32) {
+        switch resolution.uppercased() {
+        case "4K": return (3840, 2160)
+        case "1080P": return (1920, 1080)
+        case "720P": return (1280, 720)
+        default: return (1920, 1440)   // 4:3 — полный кадр сенсора, лучший FOV для трекинга
         }
-        logToFile("✅ AVCaptureSession created")
-        
+    }
+
+    var isJPEG: Bool { streamMode.uppercased() == "TCP_JPEG" }
+}
+
+// MARK: - Захват камеры (без ARKit)
+
+/// Камера, настроенная под трекинг и passthrough:
+/// - один физический объектив (wide), без переключения линз
+/// - фиксированный формат и FPS, стабилизация выключена (иначе плывут интринсики)
+/// - короткая выдержка против смаза, фокус фиксируется после автофокуса
+/// - интринсики для каждого кадра
+final class CameraCapture {
+    let session = AVCaptureSession()
+    let videoOutput = AVCaptureVideoDataOutput()
+    private(set) var depthOutput: AVCaptureDepthDataOutput?
+    private(set) var device: AVCaptureDevice?
+    private(set) var activeFPS: Double = 0
+    private(set) var horizontalFOV: Float = 0
+
+    struct Result {
+        let width: Int32
+        let height: Int32
+        let fps: Double
+        let depth: Bool
+    }
+
+    func configure(settings: StreamSettings) -> Result? {
         session.beginConfiguration()
+        defer { session.commitConfiguration() }
         session.sessionPreset = .inputPriority
-        logToFile("✅ Session configuration started")
-        
-        guard let device = AVCaptureDevice.default(.builtInLiDARDepthCamera, for: .video, position: .back) ??
-                         AVCaptureDevice.default(.builtInDualCamera, for: .video, position: .back) ??
-                         AVCaptureDevice.default(for: .video) else {
-            logToFile("❌ Camera not available - no device found")
-            return
+
+        let wantDepth = settings.useLiDAR
+        let chosen: AVCaptureDevice?
+        if wantDepth, let lidar = AVCaptureDevice.default(.builtInLiDARDepthCamera, for: .video, position: .back) {
+            chosen = lidar
+        } else {
+            chosen = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
         }
-        
-        logToFile("✅ Camera device found: \(device.localizedName)")
-        
+        guard let device = chosen else {
+            logToFile("❌ No back camera")
+            return nil
+        }
+        self.device = device
+
         do {
             let input = try AVCaptureDeviceInput(device: device)
-            logToFile("✅ AVCaptureDeviceInput created")
-            
-            if session.canAddInput(input) { 
-                session.addInput(input)
-                logToFile("✅ Camera input added to session")
-            } else {
-                logToFile("❌ Cannot add camera input - session.canAddInput returned false")
-                return
+            guard session.canAddInput(input) else {
+                logToFile("❌ Cannot add camera input")
+                return nil
             }
-            
-            videoOutput = AVCaptureVideoDataOutput()
-            videoOutput?.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
-            videoOutput?.alwaysDiscardsLateVideoFrames = true
-            logToFile("✅ AVCaptureVideoDataOutput created")
-            
-            if let videoOut = videoOutput, session.canAddOutput(videoOut) {
-                session.addOutput(videoOut)
-                logToFile("✅ Video output added to session")
-            } else {
-                logToFile("❌ Cannot add video output - session.canAddOutput returned false")
-                return
+            session.addInput(input)
+        } catch {
+            logToFile("❌ Camera input error: \(error)")
+            return nil
+        }
+
+        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
+        videoOutput.alwaysDiscardsLateVideoFrames = true
+        guard session.canAddOutput(videoOutput) else {
+            logToFile("❌ Cannot add video output")
+            return nil
+        }
+        session.addOutput(videoOutput)
+
+        let target = settings.preferredDimensions
+        guard let format = Self.pickFormat(device: device,
+                                           width: target.width, height: target.height,
+                                           fps: Double(settings.targetFPS),
+                                           requireDepth: wantDepth) else {
+            logToFile("❌ No suitable camera format")
+            return nil
+        }
+
+        var hasDepth = false
+        if wantDepth && !format.supportedDepthDataFormats.isEmpty {
+            let output = AVCaptureDepthDataOutput()
+            output.isFilteringEnabled = false        // сырые данные, без сглаживания Apple
+            output.alwaysDiscardsLateDepthData = true
+            if session.canAddOutput(output) {
+                session.addOutput(output)
+                depthOutput = output
+                hasDepth = true
             }
-            
-            // Check if depth is supported by looking at supported depth formats
-            logToFile("🔍 Checking depth support - supportedDepthDataFormats count: \(device.activeFormat.supportedDepthDataFormats.count)")
-            
-            if !device.activeFormat.supportedDepthDataFormats.isEmpty {
-                depthOutput = AVCaptureDepthDataOutput()
-                depthOutput?.isFilteringEnabled = true
-                depthOutput?.alwaysDiscardsLateDepthData = true
-                logToFile("✅ AVCaptureDepthDataOutput created")
-                
-                if let depthOut = depthOutput, session.canAddOutput(depthOut) {
-                    session.addOutput(depthOut)
-                    logToFile("✅ Depth output added (LiDAR supported)")
-                } else {
-                    logToFile("⚠️ Cannot add depth output - session.canAddOutput returned false")
-                }
-            } else {
-                logToFile("⚠️ Depth not supported by this device - supportedDepthDataFormats is empty")
-            }
-            
+        }
+
+        do {
             try device.lockForConfiguration()
-            logToFile("✅ Device locked for configuration")
-            
+            defer { device.unlockForConfiguration() }
+
+            device.activeFormat = format
+            let maxFps = format.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 30
+            let fps = min(Double(settings.targetFPS), maxFps)
+            let duration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
+            device.activeVideoMinFrameDuration = duration
+            device.activeVideoMaxFrameDuration = duration
+            activeFPS = fps.rounded()
+
+            if hasDepth {
+                let f16 = format.supportedDepthDataFormats.filter {
+                    CMFormatDescriptionGetMediaSubType($0.formatDescription) == kCVPixelFormatType_DepthFloat16
+                }
+                // ≤320 px по ширине — родное разрешение LiDAR (256x192 / 320x240), больше — апсемплинг Apple
+                let all = f16.isEmpty ? format.supportedDepthDataFormats : f16
+                let native = all.filter { CMVideoFormatDescriptionGetDimensions($0.formatDescription).width <= 320 }
+                let candidates = native.isEmpty ? all : native
+                if let best = candidates.max(by: {
+                    CMVideoFormatDescriptionGetDimensions($0.formatDescription).width <
+                    CMVideoFormatDescriptionGetDimensions($1.formatDescription).width
+                }) {
+                    device.activeDepthDataFormat = best
+                }
+            }
+
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+                // Короткая выдержка (≤ 1/240 с) — меньше смаза при поворотах головы
+                var maxExposure = CMTime(value: 1, timescale: 240)
+                maxExposure = CMTimeMaximum(maxExposure, format.minExposureDuration)
+                maxExposure = CMTimeMinimum(maxExposure, format.maxExposureDuration)
+                device.activeMaxExposureDuration = maxExposure
+            }
             if device.isFocusModeSupported(.continuousAutoFocus) {
                 device.focusMode = .continuousAutoFocus
-                logToFile("✅ Continuous autofocus enabled")
-            } else {
-                logToFile("⚠️ Continuous autofocus not supported")
+            }
+            device.isSubjectAreaChangeMonitoringEnabled = false
+        } catch {
+            logToFile("❌ lockForConfiguration failed: \(error)")
+            return nil
+        }
+
+        if let connection = videoOutput.connection(with: .video) {
+            if connection.isVideoStabilizationSupported {
+                connection.preferredVideoStabilizationMode = .off
+            }
+            if connection.isCameraIntrinsicMatrixDeliverySupported {
+                connection.isCameraIntrinsicMatrixDeliveryEnabled = true
+            }
+        }
+
+        horizontalFOV = format.videoFieldOfView
+        let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        logToFile("✅ Camera \(device.localizedName): \(dims.width)x\(dims.height) @\(Int(activeFPS)) fps, depth=\(hasDepth), HFOV=\(format.videoFieldOfView)°")
+        return Result(width: dims.width, height: dims.height, fps: activeFPS, depth: hasDepth)
+    }
+
+    /// Фиксирует фокус после того как автофокус сошёлся: при изменении фокуса меняются интринсики.
+    func lockFocus() {
+        guard let device = device else { return }
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusModeSupported(.locked) {
+                device.focusMode = .locked
             }
             device.unlockForConfiguration()
-            logToFile("✅ Device unlocked")
-            
-            session.commitConfiguration()
-            logToFile("✅ Session configuration committed")
-            
-            // 🔹 ВАЖНО: запускаем сессию синхронно чтобы убедиться что она запустилась
-            DispatchQueue.global(qos: .userInitiated).async { 
-                session.startRunning()
-                logToFile("✅ Camera session running (isRunning: \(session.isRunning))")
-            }
-            logToFile("🎥 Camera session started (LiDAR: \(depthOutput != nil))")
+            logToFile("🔒 Focus locked at lensPosition=\(device.lensPosition)")
         } catch {
-            logToFile("❌ Camera init error: \(error.localizedDescription)")
-            logToFile("❌ Error details: \(error)")
+            logToFile("⚠️ lockFocus failed: \(error)")
         }
     }
-    
-    func stopSession() {
-        captureSession?.stopRunning()
-        captureSession = nil
+
+    var exposureMicroseconds: UInt32 {
+        guard let d = device else { return 0 }
+        let s = CMTimeGetSeconds(d.exposureDuration)
+        return s.isFinite ? UInt32(clamping: Int(s * 1_000_000)) : 0
     }
-    
-    func setVideoDelegate(_ delegate: AVCaptureVideoDataOutputSampleBufferDelegate, queue: DispatchQueue) {
-        if videoOutput != nil {
-            videoOutput?.setSampleBufferDelegate(delegate, queue: queue)
-            logToFile("✅ Video delegate set successfully")
-        } else {
-            logToFile("❌ Cannot set video delegate - videoOutput is nil")
+
+    private static func pickFormat(device: AVCaptureDevice, width: Int32, height: Int32,
+                                   fps: Double, requireDepth: Bool) -> AVCaptureDevice.Format? {
+        let targetPixels = Double(width) * Double(height)
+        let targetAspect = Double(width) / Double(height)
+
+        func score(_ f: AVCaptureDevice.Format) -> Double {
+            let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+            let pixels = Double(d.width) * Double(d.height)
+            let aspect = Double(d.width) / Double(d.height)
+            let maxFps = f.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0
+            var s = abs(pixels - targetPixels) / targetPixels
+            s += abs(aspect - targetAspect) * 2
+            if maxFps + 0.5 < fps { s += 10 + (fps - maxFps) / 10 }
+            if requireDepth && f.supportedDepthDataFormats.isEmpty { s += 100 }
+            if CMFormatDescriptionGetMediaSubType(f.formatDescription) != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange { s += 0.05 }
+            if f.isVideoBinned { s += 0.02 }
+            return s
         }
-    }
-    
-    func setDepthDelegate(_ delegate: AVCaptureDepthDataOutputDelegate, queue: DispatchQueue) {
-        if depthOutput != nil {
-            depthOutput?.setDelegate(delegate, callbackQueue: queue)
-            logToFile("✅ Depth delegate set successfully")
-        } else {
-            logToFile("⚠️ Cannot set depth delegate - depthOutput is nil (LiDAR not available)")
-        }
-    }
-    
-    // 🔹 НОВЫЙ МЕТОД: установить делегаты после инициализации
-    func setDelegates(_ videoDelegate: AVCaptureVideoDataOutputSampleBufferDelegate?, 
-                     _ depthDelegate: AVCaptureDepthDataOutputDelegate?,
-                     videoQueue: DispatchQueue,
-                     depthQueue: DispatchQueue) {
-        if let videoDelegate = videoDelegate {
-            setVideoDelegate(videoDelegate, queue: videoQueue)
-        }
-        if let depthDelegate = depthDelegate {
-            setDepthDelegate(depthDelegate, queue: depthQueue)
-        }
+        return device.formats.min(by: { score($0) < score($1) })
     }
 }
 
-// MARK: - ARStreamer Main Class
+// MARK: - ARStreamer
+
 class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureDepthDataOutputDelegate {
-    private var connection: NWConnection
-    private let previewCallback: (UIImage, UIImage?) -> Void
-    private let fpsCallback: ((Int, Int) -> Void)?
-    private var lidarManager: LiDARDepthManager?
-    private let context = CIContext()
-    private var useLiDAR: Bool = false
-    private var streamMode: String = "TCP_H264"
-    private var compressionQuality: CGFloat = 0.8
-    
+
     enum DisplayMode {
         case rgbOnly
         case depthOnly
         case both
     }
-    private var currentDisplayMode: DisplayMode = .rgbOnly
-    
-    private var encoder: H264Encoder?
-    private var usbManager: USBEthernetManager?
-    
-    private var lastFrameTime = Date()
-    private var frameCount = 0
-    private var bytesSent = 0
-    private var lidarBytesSent = 0
-    private var lastSentTime: TimeInterval = 0
-    private var targetFPS: Int = 60
-    
-    private var lastDepthMap: CVPixelBuffer?
-    private var lastConfidenceMap: CVPixelBuffer?
-    private var lastRGBImage: UIImage?  // 🔹 Сохраняем последний RGB frame для синхронизации
-    private var lidarStreamEnabled: Bool = false
-    private var lastLidarSentTime: TimeInterval = 0
-    private var lidarFrameCount: Int = 0
-    
-    private var frameInterval: TimeInterval {
-        return 1.0 / Double(targetFPS)
-    }
-    
-    private var lidarFrameInterval: TimeInterval {
-        return 1.0 / Double(targetFPS)
-    }
-    
-    private var usbCompressionQuality: CGFloat {
-        return streamMode == "USB" ? 0.95 : compressionQuality
-    }
-    
-    private var frameSequence: UInt64 = 0
-    private var lastSentFrameTime: TimeInterval = 0
-    private var frameTimestamps: [UInt64: TimeInterval] = [:]
-    
-    private let motionManager = CMMotionManager()
-    private var lastSensorData: (pitch: Float, yaw: Float, roll: Float, accelX: Float, accelY: Float, accelZ: Float, gyroX: Float, gyroY: Float, gyroZ: Float, gravityX: Float, gravityY: Float, gravityZ: Float, magX: Float, magY: Float, magZ: Float)?
-    private var sensorSequence: UInt64 = 0
-    private var lastSensorSentTime: TimeInterval = 0
-    private var sensorInterval: TimeInterval {
-        return 1.0 / Double(targetFPS)
-    }
-    
-    // 🔹 НОВОЕ: callback для обновления IMU и позиции
+
     var imuUpdateCallback: ((String, String) -> Void)?
-    
-    // MARK: - Initialization
+
+    private var settings: StreamSettings
+    private var sender: PacketSender
+    private let previewCallback: (UIImage, UIImage?) -> Void
+    private let fpsCallback: ((Int, Int) -> Void)?
+
+    private let camera = CameraCapture()
+    private let imu = RawIMUStreamer()
+    private var encoder: VideoEncoder?
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    private let sessionQueue = DispatchQueue(label: "glaski.session", qos: .userInitiated)
+    private let videoQueue = DispatchQueue(label: "glaski.video", qos: .userInteractive)
+    private let depthQueue = DispatchQueue(label: "glaski.depth", qos: .userInitiated)
+
+    // Только из videoQueue
+    private var framesThisSecond = 0
+    private var droppedThisSecond = 0
+    private var statsWindowStart = CACurrentMediaTime()
+    private var lastPreviewTime: CFTimeInterval = 0
+
+    // Только из depthQueue
+    private var lastDepthPreviewTime: CFTimeInterval = 0
+
+    private let stateLock = NSLock()
+    private var currentDisplayMode: DisplayMode = .rgbOnly
+    private var lastRGBPreview: UIImage?
+    private var uiOrientation: UIDeviceOrientation = .landscapeRight
+    private var running = false
+
     init(connection: NWConnection,
-         useLiDAR: Bool = false,
-         streamMode: String = "TCP_H264",
-         compressionQuality: CGFloat = 0.8,
-         targetFPS: Int = 60,
+         settings: StreamSettings,
          previewCallback: @escaping (UIImage, UIImage?) -> Void,
          fpsCallback: ((Int, Int) -> Void)? = nil,
          usbManager: USBEthernetManager? = nil) {
-        
-        self.connection = connection
+        self.settings = settings
         self.previewCallback = previewCallback
         self.fpsCallback = fpsCallback
-        self.useLiDAR = useLiDAR
-        self.streamMode = streamMode
-        self.compressionQuality = compressionQuality
-        self.targetFPS = targetFPS
-        self.usbManager = usbManager
-        
+        self.sender = ARStreamer.makeSender(streamMode: settings.streamMode, connection: connection, usbManager: usbManager)
         super.init()
-        setupSensors()
-        
-        if streamMode == "TCP_H264" || streamMode == "UDP_H264" {
-            setupH264Encoder()
-        }
-        
-        // Send camera intrinsics to PC on startup
-        sendCameraIntrinsics()
-    }
-    
-    // MARK: - Sensor Setup
-    private func setupSensors() {
-        guard motionManager.isDeviceMotionAvailable else {
-            print("Motion sensors unavailable")
-            return
-        }
-        
-        motionManager.deviceMotionUpdateInterval = sensorInterval
-        motionManager.showsDeviceMovementDisplay = true
-        
-        motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] (motion, error) in
-            guard let self = self, let motion = motion else { return }
-            
-            let euler = motion.eulerAngles
-            let accel = motion.userAccel  // 🔹 userAcceleration уже в m/s² (БЕЗ гравитации)
-            let gyro = motion.rotationRateVec
-            let gravity = motion.gravityVec
-            let mag = motion.magneticFieldVec
-
-            self.lastSensorData = (
-                pitch: Float(euler.pitch),
-                yaw: Float(euler.yaw),
-                roll: Float(euler.roll),
-                accelX: Float(accel.x),  // 🔹 ИСПРАВЛЕНО: userAcceleration уже в m/s²
-                accelY: Float(accel.y),  // 🔹 НЕ умножаем на gToMs2!
-                accelZ: Float(accel.z),  // 🔹 Это была ошибка
-                gyroX: Float(gyro.x),
-                gyroY: Float(gyro.y),
-                gyroZ: Float(gyro.z),
-                gravityX: Float(gravity.x),
-                gravityY: Float(gravity.y),
-                gravityZ: Float(gravity.z),
-                magX: Float(mag.x),
-                magY: Float(mag.y),
-                magZ: Float(mag.z)
-            )
-            
-            // 🔹 ОБНОВЛЯЕМ IMU И ПОЗИЦИЮ В UI (каждый 10-й кадр)
-            if self.frameSequence % 10 == 0 {
-                let imuStr = String(format: "IMU: A(%.1f,%.1f,%.1f) G(%.1f,%.1f,%.1f)", 
-                    accel.x, accel.y, accel.z, gyro.x, gyro.y, gyro.z)
-                let posStr = String(format: "Rot: P%.0f° Y%.0f° R%.0f°", 
-                    euler.pitch * 180 / .pi, euler.yaw * 180 / .pi, euler.roll * 180 / .pi)
-                self.imuUpdateCallback?(imuStr, posStr)
-            }
-        }
-        
-        print("Motion sensors active (60 Hz)")
-    }
-    
-    // MARK: - Send Sensor Data (104 bytes format for ARLauncher compatibility)
-    private func sendSensorData(cameraData: CameraData, frameSequence: UInt64) {
-        let now = Date().timeIntervalSince1970
-        guard now - lastSensorSentTime >= sensorInterval else { return }
-        lastSensorSentTime = now
-        
-        var data = Data()
-        
-        // 1. Timestamp (UInt64, 8 bytes)
-        let timestamp = UInt64(now * 1000)
-        var timestampVar = timestamp
-        withUnsafeBytes(of: &timestampVar) { data.append(contentsOf: $0) }
-        
-        // 2. IMU Data (12 x Double = 96 bytes) - accel, gyro, gravity, mag
-        if let sensor = lastSensorData {
-            let values: [Double] = [
-                Double(sensor.accelX), Double(sensor.accelY), Double(sensor.accelZ),
-                Double(sensor.gyroX), Double(sensor.gyroY), Double(sensor.gyroZ),
-                Double(sensor.gravityX), Double(sensor.gravityY), Double(sensor.gravityZ),
-                Double(sensor.magX), Double(sensor.magY), Double(sensor.magZ)
-            ]
-            for value in values {
-                withUnsafeBytes(of: value) { data.append(contentsOf: $0) }
-            }
-            
-            // 3. Euler angles (3 x Double = 24 bytes) - pitch, yaw, roll from CMDeviceMotion
-            let eulerValues: [Double] = [
-                Double(sensor.pitch), Double(sensor.yaw), Double(sensor.roll)
-            ]
-            for value in eulerValues {
-                withUnsafeBytes(of: value) { data.append(contentsOf: $0) }
-            }
-        } else {
-            for _ in 0..<15 {
-                let zero: Double = 0.0
-                withUnsafeBytes(of: zero) { data.append(contentsOf: $0) }
-            }
-        }
-            
-            // 🔹 ЛОГИРОВАНИЕ IMU ДАННЫХ
-            if frameSequence <= 5 || frameSequence % 60 == 0 {
-                print("📊 IMU #\(frameSequence): Accel=(\(String(format: "%.2f", sensor.accelX)), \(String(format: "%.2f", sensor.accelY)), \(String(format: "%.2f", sensor.accelZ))) Gyro=(\(String(format: "%.2f", sensor.gyroX)), \(String(format: "%.2f", sensor.gyroY)), \(String(format: "%.2f", sensor.gyroZ)))")
-                logToFile("📊 IMU #\(frameSequence): Accel=(\(sensor.accelX), \(sensor.accelY), \(sensor.accelZ)) Gyro=(\(sensor.gyroX), \(sensor.gyroY), \(sensor.gyroZ))")
-            }
-        } else {
-            let zero: Double = 0.0
-            for _ in 0..<12 {
-                withUnsafeBytes(of: zero) { data.append(contentsOf: $0) }
-            }
-            
-            // 🔹 ЛОГИРОВАНИЕ ОТСУТСТВИЯ IMU ДАННЫХ
-            if frameSequence <= 5 || frameSequence % 60 == 0 {
-                print("⚠️ IMU #\(frameSequence): NO SENSOR DATA - sending zeros")
-                logToFile("⚠️ IMU #\(frameSequence): NO SENSOR DATA - sending zeros")
-            }
-        }
-        
-        guard data.count == 128 else {
-            print("Sensor data size error: \(data.count)")
-            logToFile("❌ Sensor data size error: \(data.count)")
-            return
-        }
-        
-        switch streamMode {
-        case "USB":
-            sendUSBSensorData(data, frameSequence: frameSequence)
-        case "TCP_JPEG", "TCP_H264":
-            sendTCPSensorData(data, frameSequence: frameSequence)
-        case "UDP_H264":
-            sendUDPSensorData(data, frameSequence: frameSequence)
-        default:
-            sendTCPSensorData(data, frameSequence: frameSequence)
-        }
-    }
-    
-    private func sendTCPSensorData(_ data: Data, frameSequence: UInt64) {
-        var dataType: UInt8 = 0x03
-        var sequenceBigEndian = frameSequence.bigEndian
-        var size = UInt32(data.count).bigEndian
-        
-        let headerData = Data(bytes: &dataType, count: 1) +
-                        Data(bytes: &sequenceBigEndian, count: 8) +
-                        Data(bytes: &size, count: 4)
-        let fullData = headerData + data
-        
-        connection.send(content: fullData, completion: .contentProcessed({ err in
-            if let e = err {
-                print("TCP sensor send error:", e)
-            } else if frameSequence % 60 == 0 {
-                print("TCP sensors #\(frameSequence) sent")
-            }
-        }))
-    }
-    
-    private func sendUDPSensorData(_ data: Data, frameSequence: UInt64) {
-        var dataType: UInt8 = 0x03
-        var sequenceBigEndian = frameSequence.bigEndian
-        var size = UInt32(data.count).bigEndian
-        
-        let headerData = Data(bytes: &dataType, count: 1) +
-                        Data(bytes: &sequenceBigEndian, count: 8) +
-                        Data(bytes: &size, count: 4)
-        let fullData = headerData + data
-        
-        connection.send(content: fullData, completion: .contentProcessed({ err in
-            if let e = err {
-                print("UDP sensor send error:", e)
-            } else if frameSequence % 60 == 0 {
-                print("UDP sensors #\(frameSequence) sent")
-            }
-        }))
-    }
-    
-    private func sendUSBSensorData(_ data: Data, frameSequence: UInt64) {
-        guard let usbManager = usbManager, usbManager.isConnected else { return }
-        
-        var dataType: UInt8 = 0x03
-        var sequenceBigEndian = frameSequence.bigEndian
-        var size = UInt32(data.count).bigEndian
-        
-        let headerData = Data(bytes: &dataType, count: 1) +
-                        Data(bytes: &sequenceBigEndian, count: 8) +
-                        Data(bytes: &size, count: 4)
-        let fullData = headerData + data
-        
-        usbManager.sendData(fullData)
-        
-        if frameSequence % 60 == 0 {
-            print("USB sensors #\(frameSequence) sent")
-        }
-    }
-    
-    // MARK: - Send LiDAR Data (0x02)
-    // Отправляем сырые depth данные с заголовком (width, height, format)
-    // Вся обработка в point cloud должна быть на PC!
-    private func sendLiDARData(_ depthData: AVDepthData, frameSequence: UInt64) {
-        let depthMap = depthData.depthDataMap
-
-        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-
-        guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return }
-        let width = CVPixelBufferGetWidth(depthMap)
-        let height = CVPixelBufferGetHeight(depthMap)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
-        let pixelFormat = CVPixelBufferGetPixelFormatType(depthMap)
-
-        let isFloat16 = (pixelFormat == kCVPixelFormatType_DepthFloat16 ||
-                         pixelFormat == kCVPixelFormatType_DisparityFloat16)
-        let isFloat32 = (pixelFormat == kCVPixelFormatType_DepthFloat32 ||
-                         pixelFormat == kCVPixelFormatType_DisparityFloat32)
-
-        // Отправляем сырые данные с заголовком
-        var depthData = Data()
-        
-        // Заголовок: width(4) + height(4) + format(1) + reserved(3)
-        var w = UInt32(width).littleEndian
-        var h = UInt32(height).littleEndian
-        let format: UInt8 = isFloat32 ? 1 : 0  // 0=Float16, 1=Float32
-        
-        withUnsafeBytes(of: &w) { depthData.append(contentsOf: $0) }
-        withUnsafeBytes(of: &h) { depthData.append(contentsOf: $0) }
-        depthData.append(format)
-        depthData.append(contentsOf: [0, 0, 0])  // padding
-        
-        // Конвертируем в плоский Float32 массив (PC будет обрабатывать)
-        var float32Data = Data(count: width * height * MemoryLayout<Float32>.size)
-        float32Data.withUnsafeMutableBytes { rawBuffer in
-            guard let outPtr = rawBuffer.bindMemory(to: Float32.self).baseAddress else { return }
-            if isFloat32 {
-                let inPtr = baseAddress.assumingMemoryBound(to: Float32.self)
-                for y in 0..<height {
-                    for x in 0..<width {
-                        outPtr[y * width + x] = inPtr[y * (bytesPerRow / 4) + x]
-                    }
-                }
-            } else if isFloat16 {
-                let inPtr = baseAddress.assumingMemoryBound(to: UInt16.self)
-                for y in 0..<height {
-                    for x in 0..<width {
-                        let f16 = inPtr[y * (bytesPerRow / 2) + x]
-                        outPtr[y * width + x] = float16to32(f16)
-                    }
-                }
-            }
-        }
-        
-        depthData.append(float32Data)
-        sendData(depthData, frameSequence: frameSequence, dataType: 0x02)
     }
 
-    // Конвертация Float16 -> Float32 (IEEE 754 half-precision)
-    private func float16to32(_ f16: UInt16) -> Float32 {
-        let sign = (f16 >> 15) & 0x1
-        let exponent = (f16 >> 10) & 0x1F
-        let mantissa = f16 & 0x3FF
-        if exponent == 0 {
-            if mantissa == 0 { return 0.0 }
-            let value = Float(mantissa) / 1024.0 * powf(2, -14)
-            return sign == 0 ? value : -value
-        } else if exponent == 31 {
-            return mantissa == 0 ? (sign == 0 ? Float.infinity : -Float.infinity) : Float.nan
-        } else {
-            let value = powf(2, Float(exponent) - 15) * (1.0 + Float(mantissa) / 1024.0)
-            return sign == 0 ? value : -value
-        }
-    }
-    
-    // MARK: - Send Point Cloud (0x08)
-    private func sendPointCloudData(_ depthData: AVDepthData, frameSequence: UInt64) {
-        let depthMap = depthData.depthDataMap
-        let width = CVPixelBufferGetWidth(depthMap)
-        let height = CVPixelBufferGetHeight(depthMap)
-        
-        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-        
-        guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return }
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
-        let pixelFormat = CVPixelBufferGetPixelFormatType(depthMap)
-        
-        let isFloat16 = (pixelFormat == kCVPixelFormatType_DepthFloat16 ||
-                         pixelFormat == kCVPixelFormatType_DisparityFloat16)
-        let isFloat32 = (pixelFormat == kCVPixelFormatType_DepthFloat32 ||
-                         pixelFormat == kCVPixelFormatType_DisparityFloat32)
-        
-        // Convert depth map to point cloud with XYZ coordinates
-        var pointCloudData = Data()
-        
-        // Add header: width, height, point count
-        var w = UInt32(width).littleEndian
-        var h = UInt32(height).littleEndian
-        withUnsafeBytes(of: &w) { pointCloudData.append(contentsOf: $0) }
-        withUnsafeBytes(of: &h) { pointCloudData.append(contentsOf: $0) }
-        
-        // Camera intrinsics for LiDAR (approximate)
-        // LiDAR FOV: ~70 degrees horizontal, ~55 degrees vertical
-        let fx = Float(width) / (2.0 * tan(70.0 * Float.pi / 360.0))  // focal length X
-        let fy = Float(height) / (2.0 * tan(55.0 * Float.pi / 360.0)) // focal length Y
-        let cx = Float(width) / 2.0   // principal point X
-        let cy = Float(height) / 2.0  // principal point Y
-        
-        // Add camera intrinsics
-        var fxVal = fx.bitPattern
-        var fyVal = fy.bitPattern
-        var cxVal = cx.bitPattern
-        var cyVal = cy.bitPattern
-        withUnsafeBytes(of: &fxVal) { pointCloudData.append(contentsOf: $0) }
-        withUnsafeBytes(of: &fyVal) { pointCloudData.append(contentsOf: $0) }
-        withUnsafeBytes(of: &cxVal) { pointCloudData.append(contentsOf: $0) }
-        withUnsafeBytes(of: &cyVal) { pointCloudData.append(contentsOf: $0) }
-        
-        // Convert depth map to XYZ point cloud
-        var pointCount: UInt32 = 0
-        var pointCountOffset = pointCloudData.count
-        withUnsafeBytes(of: &pointCount) { pointCloudData.append(contentsOf: $0) }
-        
-        // Generate point cloud
-        for y in 0..<height {
-            for x in 0..<width {
-                let byteIndex = y * bytesPerRow + x * (isFloat32 ? 4 : 2)
-                let depthPtr = baseAddress.advanced(by: byteIndex)
-                
-                var depth: Float32 = 0
-                if isFloat32 {
-                    depth = depthPtr.load(as: Float32.self)
-                } else if isFloat16 {
-                    let f16 = depthPtr.load(as: UInt16.self)
-                    depth = float16to32(f16)
-                }
-                
-                // Filter valid depths (0.1m to 5m)
-                if depth > 0.1 && depth < 5.0 {
-                    // Convert pixel to 3D point using camera intrinsics
-                    let px = Float(x)
-                    let py = Float(y)
-                    
-                    let X = (px - cx) * depth / fx
-                    let Y = (py - cy) * depth / fy
-                    let Z = depth
-                    
-                    // Append XYZ as floats
-                    var xVal = X.bitPattern
-                    var yVal = Y.bitPattern
-                    var zVal = Z.bitPattern
-                    withUnsafeBytes(of: &xVal) { pointCloudData.append(contentsOf: $0) }
-                    withUnsafeBytes(of: &yVal) { pointCloudData.append(contentsOf: $0) }
-                    withUnsafeBytes(of: &zVal) { pointCloudData.append(contentsOf: $0) }
-                    
-                    pointCount += 1
-                }
-            }
-        }
-        
-        // Update point count in header
-        var pointCountLE = pointCount.littleEndian
-        withUnsafeBytes(of: &pointCountLE) { bytes in
-            pointCloudData.replaceSubrange(pointCountOffset..<pointCountOffset+4, with: bytes)
-        }
-        
-        sendData(pointCloudData, frameSequence: frameSequence, dataType: 0x08)
-    }
-    
-    // MARK: - Send Confidence Map (0x09)
-    private func sendConfidenceMapData(_ depthData: AVDepthData, frameSequence: UInt64) {
-        // AVDepthData may have confidence map available
-        // For now, send placeholder or derived confidence from depth data
-        let depthMap = depthData.depthDataMap
-        let width = CVPixelBufferGetWidth(depthMap)
-        let height = CVPixelBufferGetHeight(depthMap)
-        
-        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-        
-        guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return }
-        
-        var confidenceData = Data()
-        
-        // Header: width, height
-        var w = UInt32(width).bigEndian
-        var h = UInt32(height).bigEndian
-        withUnsafeBytes(of: &w) { confidenceData.append(contentsOf: $0) }
-        withUnsafeBytes(of: &h) { confidenceData.append(contentsOf: $0) }
-        
-        // Generate confidence values based on depth validity
-        // 0 = low confidence, 255 = high confidence
-        for y in 0..<height {
-            for x in 0..<width {
-                let byteIndex = y * CVPixelBufferGetBytesPerRow(depthMap) + x * MemoryLayout<Float32>.size
-                let depthPtr = baseAddress.advanced(by: byteIndex)
-                let depth = depthPtr.load(as: Float32.self)
-                
-                // Simple confidence: valid depth = high confidence
-                let confidence: UInt8 = (depth > 0 && depth < 10.0) ? 255 : 0
-                confidenceData.append(confidence)
-            }
-        }
-        
-        sendData(confidenceData, frameSequence: frameSequence, dataType: 0x09)
-    }
-    
-    private func sendData(_ data: Data, frameSequence: UInt64, dataType: UInt8) {
-        switch streamMode {
-        case "USB":
-            sendUSBData(data, frameSequence: frameSequence, dataType: dataType)
-        case "TCP_JPEG", "TCP_H264":
-            sendTCPData(data, frameSequence: frameSequence, dataType: dataType)
-        case "UDP_H264":
-            sendUDPData(data, frameSequence: frameSequence, dataType: dataType)
-        default:
-            sendTCPData(data, frameSequence: frameSequence, dataType: dataType)
-        }
-    }
-    
-    private func sendTCPData(_ data: Data, frameSequence: UInt64, dataType: UInt8) {
-        var seq = frameSequence.bigEndian
-        var size = UInt32(data.count).bigEndian
-        
-        let header = Data([dataType]) +
-                     Data(bytes: &seq, count: 8) +
-                     Data(bytes: &size, count: 4)
-        let packet = header + data
-        
-        connection.send(content: packet, completion: .contentProcessed({ err in
-            if let e = err {
-                print("TCP send error:", e)
-            }
-        }))
-    }
-    
-    private func sendUDPData(_ data: Data, frameSequence: UInt64, dataType: UInt8) {
-        var seq = frameSequence.bigEndian
-        var size = UInt32(data.count).bigEndian
-        
-        let header = Data([dataType]) +
-                     Data(bytes: &seq, count: 8) +
-                     Data(bytes: &size, count: 4)
-        let packet = header + data
-        
-        connection.send(content: packet, completion: .contentProcessed({ err in
-            if let e = err {
-                print("UDP send error:", e)
-            }
-        }))
-    }
-    
-    private func sendUSBData(_ data: Data, frameSequence: UInt64, dataType: UInt8) {
-        guard let usbManager = usbManager, usbManager.isConnected else { return }
-        
-        var seq = frameSequence.bigEndian
-        var size = UInt32(data.count).bigEndian
-        
-        let header = Data([dataType]) +
-                     Data(bytes: &seq, count: 8) +
-                     Data(bytes: &size, count: 4)
-        let packet = header + data
-        
-        usbManager.sendData(packet)
-    }
-    
-    // MARK: - Orientation
-    func sendOrientation(degrees: Double) {
-        var angle = degrees
-        let data = Data(bytes: &angle, count: MemoryLayout.size(ofValue: angle))
-        frameSequence += 1
-        sendData(data, frameSequence: frameSequence, dataType: 0x0A)
+    /// Совместимость со старым вызовом
+    convenience init(connection: NWConnection,
+                     useLiDAR: Bool = false,
+                     streamMode: String = "TCP_H264",
+                     compressionQuality: CGFloat = 0.8,
+                     targetFPS: Int = 60,
+                     previewCallback: @escaping (UIImage, UIImage?) -> Void,
+                     fpsCallback: ((Int, Int) -> Void)? = nil,
+                     usbManager: USBEthernetManager? = nil) {
+        var s = StreamSettings()
+        s.streamMode = streamMode
+        s.useLiDAR = useLiDAR
+        s.jpegQuality = compressionQuality
+        s.targetFPS = targetFPS
+        self.init(connection: connection, settings: s, previewCallback: previewCallback,
+                  fpsCallback: fpsCallback, usbManager: usbManager)
     }
 
-    // MARK: - Video Frame Processing
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        // 🔹 ЛОГИРОВАНИЕ ПЕРВОГО ФРЕЙМА
-        if frameSequence == 0 {
-            logToFile("🎥 captureOutput called for FIRST TIME! - frames are being captured!")
+    private static func makeSender(streamMode: String, connection: NWConnection, usbManager: USBEthernetManager?) -> PacketSender {
+        if streamMode.uppercased() == "USB", let usb = usbManager {
+            return PacketSender { packet, done in usb.sendPacket(packet, completion: done) }
         }
-        
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { 
-            logToFile("❌ captureOutput: no pixelBuffer - CMSampleBufferGetImageBuffer returned nil")
-            return 
-        }
-        
-        let now = Date().timeIntervalSince1970
-        guard now - lastSentTime >= frameInterval else { return }
-        lastSentTime = now
-        
-        guard let uiImage = imageFromPixelBuffer(pixelBuffer) else { 
-            logToFile("❌ captureOutput: failed to create UIImage from pixelBuffer")
-            return 
-        }
-        
-        frameSequence += 1
-        frameTimestamps[frameSequence] = now
-        
-        // Create camera data from video output
-        var cameraData = CameraData()
-        cameraData.timestamp = now
-        if let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) {
-            let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
-            cameraData.imageResolution = CGSize(width: CGFloat(dimensions.width), height: CGFloat(dimensions.height))
-        }
-        
-        // 🔹 ЛОГИРОВАНИЕ ВИДЕО ФРЕЙМОВ
-        if frameSequence <= 5 || frameSequence % 30 == 0 {
-            print("📹 Video frame #\(frameSequence): \(cameraData.imageResolution) @ \(Int(1.0/frameInterval)) FPS, streamMode=\(streamMode)")
-        }
-        
-        // Send sensor data synchronized with frame
-        sendSensorData(cameraData: cameraData, frameSequence: frameSequence)
-        
-        // Process and send frame
-        processFrame(pixelBuffer, uiImage: uiImage, depthImage: nil, frameSequence: frameSequence)
-        updateStats()
-        
-        // 🔹 СОХРАНЯЕМ RGB FRAME для синхронизации с depth в depthDataOutput
-        self.lastRGBImage = uiImage
-        
-        // 🔹 ОТПРАВЛЯЕМ PREVIEW: если LiDAR выключен или режим rgbOnly - отправляем сразу
-        // если LiDAR включен - отправка будет из depthDataOutput
-        if !self.useLiDAR || self.currentDisplayMode == .rgbOnly {
-            DispatchQueue.main.async { [weak self] in
-                self?.previewCallback(uiImage, nil)
-            }
-        }
-        
-        cleanupOldTimestamps(currentTime: now)
-    }
-    
-    // MARK: - Depth Data Processing
-    func depthDataOutput(_ output: AVCaptureDepthDataOutput, didOutput depthData: AVDepthData, timestamp: CMTime, connection: AVCaptureConnection) {
-        let now = Date().timeIntervalSince1970
-        guard useLiDAR, now - lastLidarSentTime >= lidarFrameInterval else { return }
-        lastLidarSentTime = now
-        
-        let depthMap = depthData.depthDataMap
-        let width = CVPixelBufferGetWidth(depthMap)
-        let height = CVPixelBufferGetHeight(depthMap)
-        
-        // 🔹 ЛОГИРОВАНИЕ DEPTH ДАННЫХ
-        if frameSequence <= 5 || frameSequence % 60 == 0 {
-            print("🎯 [LIDAR] depthDataOutput: width=\(width), height=\(height), frameSequence=\(frameSequence)")
-            logToFile("🎯 [LIDAR] depthDataOutput: width=\(width), height=\(height), frameSequence=\(frameSequence)")
-        }
-        
-        // 🔹 СОЗДАЕМ DEPTH IMAGE ДЛЯ PREVIEW
-        if let depthImage = createDepthImage(from: depthData) {
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                
-                // 🔹 ОТПРАВЛЯЕМ ТОЛЬКО НУЖНЫЕ ИЗОБРАЖЕНИЯ В ЗАВИСИМОСТИ ОТ РЕЖИМА
-                switch self.currentDisplayMode {
-                case .rgbOnly:
-                    // В режиме RGB только - не отправляем depth
-                    return
-                case .depthOnly:
-                    // В режиме LiDAR только - отправляем только depth
-                    self.previewCallback(UIImage(), depthImage)
-                case .both:
-                    // В режиме "оба" - отправляем оба изображения
-                    let rgbImage = self.lastRGBImage ?? UIImage()
-                    self.previewCallback(rgbImage, depthImage)
-                }
-                
-                if self.frameSequence <= 5 || self.frameSequence % 60 == 0 {
-                    print("✅ Depth image created and sent to preview: \(depthImage.size), mode=\(self.currentDisplayMode)")
-                    logToFile("✅ Depth image created and sent to preview: \(depthImage.size), mode=\(self.currentDisplayMode)")
-                }
-            }
-        } else {
-            logToFile("❌ Failed to create depth image from depthData")
-        }
-        
-        sendLiDARData(depthData, frameSequence: frameSequence)
-        sendPointCloudData(depthData, frameSequence: frameSequence)
-        sendConfidenceMapData(depthData, frameSequence: frameSequence)
-        lidarFrameCount += 1
-        
-        // Count all LiDAR data sizes
-        let depthSize = CVPixelBufferGetDataSize(depthData.depthDataMap)
-        let confidenceSize = 8 + (width * height) // header + confidence bytes
-        let pointCloudSize = 8 + depthSize // header + depth data
-        lidarBytesSent += depthSize + pointCloudSize + confidenceSize
-    }
-    
-    // 🔹 НОВЫЙ МЕТОД: создание UIImage из depth данных с поддержкой Float16 и Float32
-    private func createDepthImage(from depthData: AVDepthData) -> UIImage? {
-        let depthMap = depthData.depthDataMap
-        let width = CVPixelBufferGetWidth(depthMap)
-        let height = CVPixelBufferGetHeight(depthMap)
-        let pixelFormat = CVPixelBufferGetPixelFormatType(depthMap)
-        
-        print("📐 Depth map: \(width)x\(height), format: \(pixelFormat)")
-        logToFile("📐 Depth map: \(width)x\(height), format: \(pixelFormat)")
-        
-        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-        
-        guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
-        
-        // Проверка формата – поддерживаем только Float32 и Float16
-        let isFloat16 = (pixelFormat == kCVPixelFormatType_DepthFloat16 ||
-                         pixelFormat == kCVPixelFormatType_DisparityFloat16)
-        let isFloat32 = (pixelFormat == kCVPixelFormatType_DepthFloat32 ||
-                         pixelFormat == kCVPixelFormatType_DisparityFloat32)
-        
-        guard isFloat16 || isFloat32 else {
-            print("❌ Unsupported depth format: \(pixelFormat)")
-            return nil
-        }
-        
-        // Вспомогательная функция конвертации Float16 -> Float32
-        func float16to32(_ f16: UInt16) -> Float {
-            let sign = (f16 >> 15) & 0x1
-            let exponent = (f16 >> 10) & 0x1F
-            let mantissa = f16 & 0x3FF
-            if exponent == 0 {
-                if mantissa == 0 { return 0.0 }
-                let value = Float(mantissa) / 1024.0 * powf(2, -14)
-                return sign == 0 ? value : -value
-            } else if exponent == 31 {
-                return mantissa == 0 ? (sign == 0 ? Float.infinity : -Float.infinity) : Float.nan
-            } else {
-                let value = powf(2, Float(exponent) - 15) * (1.0 + Float(mantissa) / 1024.0)
-                return sign == 0 ? value : -value
-            }
-        }
-        
-        // Вычисляем минимум и максимум глубины для нормализации
-        var minDepth: Float = Float.infinity
-        var maxDepth: Float = -Float.infinity
-        var validCount = 0
-        
-        if isFloat32 {
-            let depthPtr = baseAddress.assumingMemoryBound(to: Float32.self)
-            for y in 0..<height {
-                for x in 0..<width {
-                    let depth = depthPtr[y * (bytesPerRow / 4) + x]
-                    if depth > 0 && depth.isFinite {
-                        minDepth = min(minDepth, depth)
-                        maxDepth = max(maxDepth, depth)
-                        validCount += 1
-                    }
-                }
-            }
-        } else if isFloat16 {
-            let depthPtr = baseAddress.assumingMemoryBound(to: UInt16.self)
-            for y in 0..<height {
-                for x in 0..<width {
-                    let f16 = depthPtr[y * (bytesPerRow / 2) + x]
-                    let f32 = float16to32(f16)
-                    if f32 > 0 && f32.isFinite {
-                        minDepth = min(minDepth, f32)
-                        maxDepth = max(maxDepth, f32)
-                        validCount += 1
-                    }
-                }
-            }
-        }
-        
-        if validCount == 0 {
-            minDepth = 0.1
-            maxDepth = 5.0
-        }
-        let range = maxDepth - minDepth
-        if range <= 0 { return nil }
-        
-        // Создаём RGB-изображение
-        var rgbData = [UInt8](repeating: 0, count: width * height * 3)
-        
-        if isFloat32 {
-            let depthPtr = baseAddress.assumingMemoryBound(to: Float32.self)
-            for y in 0..<height {
-                for x in 0..<width {
-                    let depth = depthPtr[y * (bytesPerRow / 4) + x]
-                    let idx = (y * width + x) * 3
-                    if depth <= 0 || !depth.isFinite {
-                        rgbData[idx] = 0; rgbData[idx+1] = 0; rgbData[idx+2] = 0
-                    } else {
-                        let norm = (depth - minDepth) / range
-                        // Цветовая карта: синий->зелёный->красный
-                        if norm < 0.5 {
-                            let t = norm * 2
-                            rgbData[idx] = 0
-                            rgbData[idx+1] = UInt8(t * 255)
-                            rgbData[idx+2] = UInt8((1 - t) * 255)
-                        } else {
-                            let t = (norm - 0.5) * 2
-                            rgbData[idx] = UInt8(t * 255)
-                            rgbData[idx+1] = UInt8((1 - t) * 255)
-                            rgbData[idx+2] = 0
-                        }
-                    }
-                }
-            }
-        } else if isFloat16 {
-            let depthPtr = baseAddress.assumingMemoryBound(to: UInt16.self)
-            for y in 0..<height {
-                for x in 0..<width {
-                    let f16 = depthPtr[y * (bytesPerRow / 2) + x]
-                    let f32 = float16to32(f16)
-                    let idx = (y * width + x) * 3
-                    if f32 <= 0 || !f32.isFinite {
-                        rgbData[idx] = 0; rgbData[idx+1] = 0; rgbData[idx+2] = 0
-                    } else {
-                        let norm = (f32 - minDepth) / range
-                        if norm < 0.5 {
-                            let t = norm * 2
-                            rgbData[idx] = 0
-                            rgbData[idx+1] = UInt8(t * 255)
-                            rgbData[idx+2] = UInt8((1 - t) * 255)
-                        } else {
-                            let t = (norm - 0.5) * 2
-                            rgbData[idx] = UInt8(t * 255)
-                            rgbData[idx+1] = UInt8((1 - t) * 255)
-                            rgbData[idx+2] = 0
-                        }
-                    }
-                }
-            }
-        }
-        
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
-        guard let provider = CGDataProvider(data: Data(rgbData) as CFData) else { return nil }
-        guard let cgImage = CGImage(width: width, height: height,
-                                    bitsPerComponent: 8, bitsPerPixel: 24,
-                                    bytesPerRow: width * 3,
-                                    space: colorSpace, bitmapInfo: bitmapInfo,
-                                    provider: provider, decode: nil, shouldInterpolate: false,
-                                    intent: .defaultIntent) else { return nil }
-        
-        let result = UIImage(cgImage: cgImage)
-        print("✅ Depth image created: \(result.size)")
-        return result
-    }
-    
-    // MARK: - Frame Processing
-    private func processFrame(_ pixelBuffer: CVPixelBuffer, uiImage: UIImage, depthImage: UIImage?, frameSequence: UInt64) {
-        print("🎬 processFrame called: frameSequence=\(frameSequence), streamMode=\(streamMode)")
-        switch streamMode {
-        case "TCP_JPEG":
-            sendTCPJPEG(uiImage, frameSequence: frameSequence)
-        case "TCP_H264":
-            encodeH264Frame(pixelBuffer, frameSequence: frameSequence)
-        case "UDP_H264":
-            encodeH264Frame(pixelBuffer, frameSequence: frameSequence)
-        case "USB":
-            sendUSBFrame(uiImage, frameSequence: frameSequence)
-        default:
-            sendTCPJPEG(uiImage, frameSequence: frameSequence)
+        return PacketSender { packet, done in
+            connection.send(content: packet, completion: .contentProcessed { done($0) })
         }
     }
-    
-    private func encodeH264Frame(_ pixelBuffer: CVPixelBuffer, frameSequence: UInt64) {
-        guard let encoder = encoder else { return }
-        let presentationTime = CMTimeMake(value: Int64(lastSentTime * 1000), timescale: 1000)
-        encoder.currentFrameSequence = frameSequence
-        encoder.encode(pixelBuffer, presentationTime: presentationTime)
-    }
-    
-    private func sendH264Data(_ data: Data, isKeyframe: Bool, frameSequence: UInt64) {
-        bytesSent += data.count
-        
-        var sequenceBigEndian = frameSequence.bigEndian
-        let sequenceData = Data(bytes: &sequenceBigEndian, count: 8)
-        let fullData = sequenceData + data
-        
-        if streamMode == "UDP_H264" {
-            connection.send(content: fullData, completion: .contentProcessed({ err in
-                if let e = err { print("UDP H.264 send error:", e) }
-            }))
-        } else {
-            var size = UInt32(fullData.count).bigEndian
-            let sizeData = Data(bytes: &size, count: 4)
-            let finalData = sizeData + fullData
-            
-            connection.send(content: finalData, completion: .contentProcessed({ err in
-                if let e = err { print("TCP H.264 send error:", e) }
-            }))
-        }
-    }
-    
-    private func sendTCPJPEG(_ image: UIImage, frameSequence: UInt64) {
-        guard let jpegData = image.jpegData(compressionQuality: compressionQuality) else { return }
-        
-        var dataType: UInt8 = 0x01
-        var sequenceBigEndian = frameSequence.bigEndian
-        var size = UInt32(jpegData.count).bigEndian
-        
-        let headerData = Data(bytes: &dataType, count: 1) +
-                        Data(bytes: &sequenceBigEndian, count: 8) +
-                        Data(bytes: &size, count: 4)
-        let fullData = headerData + jpegData
-        
-        bytesSent += fullData.count
-        
-        connection.send(content: fullData, completion: .contentProcessed({ err in
-            if let e = err {
-                print("TCP JPEG send error:", e)
-            } else if frameSequence % 60 == 0 {
-                print("RGB frame #\(frameSequence) sent")
-            }
-        }))
-    }
-    
-    private func sendUSBFrame(_ image: UIImage, frameSequence: UInt64) {
-        guard let usbManager = usbManager else {
-            print("❌ sendUSBFrame: usbManager is nil")
-            return
-        }
-        guard usbManager.isConnected else {
-            print("❌ sendUSBFrame: usbManager not connected")
-            return
-        }
-        guard let jpegData = image.jpegData(compressionQuality: usbCompressionQuality) else {
-            print("❌ sendUSBFrame: failed to create JPEG data")
-            return
-        }
-        
-        var dataType: UInt8 = 0x01
-        var sequenceBigEndian = frameSequence.bigEndian
-        var frameSize = UInt32(jpegData.count).bigEndian
-        
-        let headerData = Data(bytes: &dataType, count: 1) +
-                        Data(bytes: &sequenceBigEndian, count: 8) +
-                        Data(bytes: &frameSize, count: 4)
-        let packetData = headerData + jpegData
-        
-        print("📤 sendUSBFrame: frameSequence=\(frameSequence), jpegSize=\(jpegData.count), totalSize=\(packetData.count)")
-        usbManager.sendData(packetData)
-        bytesSent += packetData.count
-    }
-    
-    // MARK: - Image Processing
-    private func imageFromPixelBuffer(_ buffer: CVPixelBuffer) -> UIImage? {
-        let ciImage = CIImage(cvPixelBuffer: buffer)
-        
-        let deviceOrientation = UIDevice.current.orientation
-        var transformedImage = ciImage
-        
-        switch deviceOrientation {
-        case .portrait:
-            transformedImage = ciImage.transformed(by: CGAffineTransform(rotationAngle: -.pi/2))
-        case .portraitUpsideDown:
-            transformedImage = ciImage.transformed(by: CGAffineTransform(rotationAngle: .pi/2))
-        case .landscapeLeft:
-            transformedImage = ciImage.transformed(by: CGAffineTransform(rotationAngle: .pi))
-        case .landscapeRight:
-            break
-        default:
-            break
-        }
-        
-        let targetSize = CGSize(width: 720, height: 1280)
-        let scaleX = targetSize.width / transformedImage.extent.width
-        let scaleY = targetSize.height / transformedImage.extent.height
-        let scale = min(scaleX, scaleY)
-        
-        let scaledImage = transformedImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        
-        guard let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent) else { return nil }
-        return UIImage(cgImage: cgImage, scale: 1.0, orientation: .up)
-    }
-    
-    // MARK: - H.264 Encoder Setup
-    private func setupH264Encoder() {
-        let width = 1280
-        let height = 720
-        let bitrate = 5_000_000
-        
-        encoder = H264Encoder()
-        encoder?.setupEncoder(width: width, height: height, bitrate: bitrate, fps: Int32(targetFPS))
-        encoder?.encodedDataCallback = { [weak self] data, isKeyframe, frameSequence in
-            self?.sendH264Data(data, isKeyframe: isKeyframe, frameSequence: frameSequence)
-        }
-    }
-    
-    // MARK: - Statistics
-    private func updateStats() {
-        frameCount += 1
-        
-        let current = Date()
-        if current.timeIntervalSince(lastFrameTime) >= 1.0 {
-            let fps = frameCount
-            let totalKBps = (bytesSent + lidarBytesSent) / 1024
-            let videoKBps = bytesSent / 1024
-            let lidarKBps = lidarBytesSent / 1024
-            
-            fpsCallback?(fps, totalKBps)
-            
-            print("Stats (\(streamMode)): Video: \(fps) FPS, \(videoKBps) KB/s | LiDAR: \(lidarFrameCount) FPS, \(lidarKBps) KB/s | Total: \(totalKBps) KB/s")
-            
-            frameCount = 0
-            lidarFrameCount = 0
-            bytesSent = 0
-            lidarBytesSent = 0
-            lastFrameTime = current
-        }
-    }
-    
-    private func cleanupOldTimestamps(currentTime: TimeInterval) {
-        let threshold: TimeInterval = 2.0
-        frameTimestamps = frameTimestamps.filter { currentTime - $0.value < threshold }
-    }
-    
-    // MARK: - Streaming Control
+
+    // MARK: - Управление
+
     @MainActor func startStreaming() {
-        logToFile("🎬 startStreaming called with streamMode: \(streamMode), useLiDAR: \(useLiDAR)")
-        
-        lidarManager = LiDARDepthManager()
-        logToFile("🎬 LiDARDepthManager created")
-        
-        // 🔹 ВАЖНО: запускаем сессию ПЕРВОЙ
-        lidarManager?.startSession()
-        logToFile("🎬 Camera session startSession() called")
-        
-        // 🔹 ЗАТЕМ устанавливаем делегаты с небольшой задержкой
-        // чтобы убедиться что outputs уже созданы
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self = self else { 
-                logToFile("❌ startStreaming: self is nil in asyncAfter")
-                return 
-            }
-            
-            logToFile("🎬 Setting delegates after 0.2 sec delay...")
-            self.lidarManager?.setVideoDelegate(self, queue: .global(qos: .userInitiated))
-            logToFile("✅ Video delegate set in ARStreamer")
-            
-            if self.useLiDAR {
-                self.lidarManager?.setDepthDelegate(self, queue: .global(qos: .userInitiated))
-                logToFile("✅ Depth delegate set in ARStreamer")
-            }
-            
-            logToFile("🎬 All delegates set, waiting for frames...")
+        stateLock.lock()
+        guard !running else { stateLock.unlock(); return }
+        running = true
+        uiOrientation = UIDevice.current.orientation
+        stateLock.unlock()
+
+        logToFile("🎬 startStreaming mode=\(settings.streamMode) codec=\(settings.codec) res=\(settings.resolution) fps=\(settings.targetFPS) bitrate=\(settings.bitrateMbps)Mbit LiDAR=\(settings.useLiDAR)")
+
+        sender.send(.hello, payload: StreamPacketBuilder.hello())
+
+        imu.onPacket = { [weak self] payload in
+            self?.sender.send(.imu, payload: payload)
         }
-        
-        // 🔹 ДОБАВЛЯЕМ ЛОГИРОВАНИЕ О СОСТОЯНИИ КАМЕРЫ
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+        imu.onDebugText = { [weak self] a, b in self?.imuUpdateCallback?(a, b) }
+        imu.start(rateHz: 100)
+
+        sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            logToFile("🎬 Camera session check after 1.5 seconds:")
-            logToFile("   - lidarManager: \(self.lidarManager != nil)")
-            logToFile("   - streamMode: \(self.streamMode)")
-            logToFile("   - useLiDAR: \(self.useLiDAR)")
-            logToFile("   - frameCount: \(self.frameCount)")
-            logToFile("   - bytesSent: \(self.bytesSent)")
+            guard let result = self.camera.configure(settings: self.settings) else { return }
+
+            if !self.settings.isJPEG {
+                let codec: VideoEncoder.Codec = self.settings.codec.uppercased() == "HEVC" ? .hevc : .h264
+                let enc = VideoEncoder(codec: codec, bitrate: self.settings.bitrateMbps * 1_000_000, fps: Int(result.fps))
+                enc.onEncoded = { [weak self] annexB, key, meta in
+                    self?.sender.send(.video, payload: StreamPacketBuilder.video(codec: codec.streamCodec, keyframe: key,
+                                                                                meta: meta, bitstream: annexB))
+                }
+                self.encoder = enc
+            }
+
+            self.camera.videoOutput.setSampleBufferDelegate(self, queue: self.videoQueue)
+            self.camera.depthOutput?.setDelegate(self, callbackQueue: self.depthQueue)
+            self.camera.session.startRunning()
+            logToFile("✅ Capture running: \(self.camera.session.isRunning)")
+
+            // Даём автофокусу сойтись, затем фиксируем фокус (стабильные интринсики)
+            self.sessionQueue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.camera.lockFocus()
+            }
         }
-        
-        logToFile("🎬 Streaming initialization started (LiDAR: \(useLiDAR), Mode: \(streamMode))")
     }
-    
+
     func stopStreaming() {
-        lidarManager?.stopSession()
-        lidarManager = nil
-        encoder?.stopEncoding()
-        motionManager.stopDeviceMotionUpdates()
+        stateLock.lock()
+        running = false
+        stateLock.unlock()
+        imu.stop()
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            if self.camera.session.isRunning { self.camera.session.stopRunning() }
+            self.videoQueue.sync { self.encoder?.invalidate() }
+        }
     }
-    
+
     func switchDisplayMode(_ mode: DisplayMode) {
-        currentDisplayMode = mode
-        print("🔄 Display mode switched: \(mode)")
+        stateLock.lock(); currentDisplayMode = mode; stateLock.unlock()
         logToFile("🔄 Display mode switched: \(mode)")
-        
-        switch mode {
-        case .rgbOnly:
-            print("📸 Showing RGB only")
-            logToFile("📸 Showing RGB only")
-        case .depthOnly:
-            print("🎯 Showing LiDAR/Depth only")
-            logToFile("🎯 Showing LiDAR/Depth only")
-        case .both:
-            print("📊 Showing both RGB and LiDAR")
-            logToFile("📊 Showing both RGB and LiDAR")
-        }
     }
-    
-    @MainActor private func getServerHost() -> String? {
-        if streamMode == "USB" {
-            return USBEthernetManager.usbHostIP
-        } else {
-            let viewModel = NetworkConnectViewModel()
-            return viewModel.serverIP
-        }
-    }
-    
-    @MainActor func getPortInfo() -> String {
-        if streamMode == "USB" {
-            return "USB port: \(USBEthernetManager.usbPort)"
-        } else {
-            return "Network: \(getServerHost() ?? "--"):\(getCurrentPort())"
-        }
-    }
-    
-    private func getCurrentPort() -> String {
-        return "9000"
-    }
-    
+
     func switchToUSBMode(usbManager: USBEthernetManager) {
-        self.usbManager = usbManager
-        self.streamMode = "USB"
-        encoder?.stopEncoding()
-        encoder = nil
-        print("Switched to USB mode")
+        settings.streamMode = "USB"
+        sender = PacketSender { packet, done in usbManager.sendPacket(packet, completion: done) }
+        encoder?.requestKeyframe()
     }
-    
+
     func switchToNetworkMode(mode: String, connection: NWConnection) {
-        self.connection = connection
-        self.streamMode = mode
-        self.usbManager = nil
-        
-        if mode == "TCP_H264" || mode == "UDP_H264" {
-            setupH264Encoder()
+        settings.streamMode = mode
+        sender = PacketSender { packet, done in
+            connection.send(content: packet, completion: .contentProcessed { done($0) })
         }
-        print("Switched to network mode: \(mode)")
+        encoder?.requestKeyframe()
     }
-    
-    // MARK: - Camera Intrinsics Transmission
-    private func sendCameraIntrinsics() {
-        // Get RGB camera intrinsics
-        let rgbIntrinsics = CameraCalibration.getRGBCameraIntrinsics(for: AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)!)
-        let lidarIntrinsics = CameraCalibration.getLiDARCameraIntrinsics()
-        
-        // Format: [type=0x10][fx_rgb][fy_rgb][cx_rgb][cy_rgb][fx_lidar][fy_lidar][cx_lidar][cy_lidar]
-        // Each value is 8 bytes (double)
-        var data = Data()
-        data.append(0x10) // Type: camera intrinsics
-        
-        // RGB intrinsics
-        data.append(contentsOf: withUnsafeBytes(of: rgbIntrinsics.fx) { Data($0) })
-        data.append(contentsOf: withUnsafeBytes(of: rgbIntrinsics.fy) { Data($0) })
-        data.append(contentsOf: withUnsafeBytes(of: rgbIntrinsics.cx) { Data($0) })
-        data.append(contentsOf: withUnsafeBytes(of: rgbIntrinsics.cy) { Data($0) })
-        
-        // LiDAR intrinsics
-        data.append(contentsOf: withUnsafeBytes(of: lidarIntrinsics.fx) { Data($0) })
-        data.append(contentsOf: withUnsafeBytes(of: lidarIntrinsics.fy) { Data($0) })
-        data.append(contentsOf: withUnsafeBytes(of: lidarIntrinsics.cx) { Data($0) })
-        data.append(contentsOf: withUnsafeBytes(of: lidarIntrinsics.cy) { Data($0) })
-        
-        sendData(data, frameSequence: 0, dataType: 0x10)
-        print("📡 Sent camera intrinsics to PC")
+
+    /// Legacy: угол ориентации устройства (градусы) — ПК больше не зависит от него (ориентация по гравитации)
+    func sendOrientation(degrees: Double) {
+        stateLock.lock(); uiOrientation = UIDevice.current.orientation; stateLock.unlock()
+        var w = PacketWriter(capacity: 8)
+        w.i64(Int64(bitPattern: degrees.bitPattern))
+        sender.send(.deviceOrientation, payload: w.data)
     }
-    
+
+    // MARK: - Время
+
+    private func hostNs(_ t: CMTime) -> Int64 {
+        var host = t
+        if let clock = camera.session.synchronizationClock {
+            host = CMSyncConvertTime(t, from: clock, to: CMClockGetHostTimeClock())
+        }
+        return secondsToNs(CMTimeGetSeconds(host))
+    }
+
+    // MARK: - Видео
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let ptsNs = hostNs(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        var meta = VideoFrameMeta(ptsNs: ptsNs, width: width, height: height,
+                                  fx: 0, fy: 0, cx: Float(width) / 2, cy: Float(height) / 2,
+                                  exposureUs: camera.exposureMicroseconds)
+        if let att = CMGetAttachment(sampleBuffer, key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix,
+                                     attachmentModeOut: nil) as? Data,
+           att.count >= MemoryLayout<matrix_float3x3>.size {
+            let k = att.withUnsafeBytes { $0.loadUnaligned(as: matrix_float3x3.self) }
+            meta.fx = k.columns.0.x
+            meta.fy = k.columns.1.y
+            meta.cx = k.columns.2.x
+            meta.cy = k.columns.2.y
+        } else {
+            // Фолбэк по паспортному FOV формата
+            let hfov = camera.horizontalFOV > 1 ? camera.horizontalFOV : 70
+            let f = Float(width) / 2 / tan(hfov * .pi / 360)
+            meta.fx = f
+            meta.fy = f
+        }
+
+        // Backpressure: если транспорт не успевает — пропускаем кадр ДО кодирования.
+        // Так задержка не копится, а цепочка P-кадров не ломается.
+        let fps = max(1, Int(camera.activeFPS))
+        let frameBudget = settings.bitrateMbps * 1_000_000 / 8 / fps
+        let maxInFlight = max(512 * 1024, frameBudget * 4)
+        let congested = sender.bytesInFlight > maxInFlight || (encoder?.pendingFrames ?? 0) > 2
+
+        if congested {
+            droppedThisSecond += 1
+        } else if settings.isJPEG {
+            sendJPEG(pixelBuffer, meta: meta)
+            framesThisSecond += 1
+        } else {
+            encoder?.encode(pixelBuffer, meta: meta)
+            framesThisSecond += 1
+        }
+
+        updatePreview(pixelBuffer)
+        updateStats()
+    }
+
+    private func sendJPEG(_ pixelBuffer: CVPixelBuffer, meta: VideoFrameMeta) {
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        let options: [CIImageRepresentationOption: Any] = [
+            CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): settings.jpegQuality
+        ]
+        guard let jpeg = ciContext.jpegRepresentation(of: image, colorSpace: CGColorSpaceCreateDeviceRGB(), options: options) else { return }
+        sender.send(.video, payload: StreamPacketBuilder.video(codec: .jpeg, keyframe: true, meta: meta, bitstream: jpeg))
+    }
+
+    private func updateStats() {
+        let now = CACurrentMediaTime()
+        guard now - statsWindowStart >= 1.0 else { return }
+        let fps = framesThisSecond
+        let dropped = droppedThisSecond
+        let bytes = sender.takeSentBytes()
+        framesThisSecond = 0
+        droppedThisSecond = 0
+        statsWindowStart = now
+        fpsCallback?(fps, bytes)
+        if dropped > 0 {
+            logToFile("⚠️ \(dropped) frames skipped (transport congested), in-flight \(sender.bytesInFlight / 1024) KB")
+        }
+    }
+
+    // MARK: - Превью на телефоне (≈8 Гц, уменьшенное, не влияет на поток)
+
+    private func updatePreview(_ pixelBuffer: CVPixelBuffer) {
+        let now = CACurrentMediaTime()
+        guard now - lastPreviewTime >= 0.125 else { return }
+        lastPreviewTime = now
+
+        stateLock.lock()
+        let mode = currentDisplayMode
+        let orientation = uiOrientation
+        let lidarOn = settings.useLiDAR
+        stateLock.unlock()
+
+        guard let image = makePreview(pixelBuffer, orientation: orientation) else { return }
+        stateLock.lock(); lastRGBPreview = image; stateLock.unlock()
+
+        // Если LiDAR включён и режим не rgbOnly — превью отдаёт depth-колбэк
+        if !lidarOn || mode == .rgbOnly {
+            DispatchQueue.main.async { [weak self] in self?.previewCallback(image, nil) }
+        }
+    }
+
+    private func makePreview(_ pixelBuffer: CVPixelBuffer, orientation: UIDeviceOrientation) -> UIImage? {
+        var image = CIImage(cvPixelBuffer: pixelBuffer)
+        switch orientation {
+        case .portrait:
+            image = image.transformed(by: CGAffineTransform(rotationAngle: -.pi / 2))
+        case .portraitUpsideDown:
+            image = image.transformed(by: CGAffineTransform(rotationAngle: .pi / 2))
+        case .landscapeLeft:
+            image = image.transformed(by: CGAffineTransform(rotationAngle: .pi))
+        default:
+            break
+        }
+        let longSide = max(image.extent.width, image.extent.height)
+        let scale = 720 / max(longSide, 1)
+        image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        image = image.transformed(by: CGAffineTransform(translationX: -image.extent.origin.x, y: -image.extent.origin.y))
+        guard let cg = ciContext.createCGImage(image, from: image.extent) else { return nil }
+        return UIImage(cgImage: cg)
+    }
+
+    // MARK: - LiDAR
+
+    func depthDataOutput(_ output: AVCaptureDepthDataOutput, didOutput depthData: AVDepthData,
+                         timestamp: CMTime, connection: AVCaptureConnection) {
+        let tNs = hostNs(timestamp)
+        let depth = depthData.depthDataType == kCVPixelFormatType_DepthFloat16
+            ? depthData
+            : depthData.converting(toDepthDataType: kCVPixelFormatType_DepthFloat16)
+        let map = depth.depthDataMap
+
+        CVPixelBufferLockBaseAddress(map, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(map) else { return }
+        let width = CVPixelBufferGetWidth(map)
+        let height = CVPixelBufferGetHeight(map)
+        let rowBytes = CVPixelBufferGetBytesPerRow(map)
+        let packedRow = width * 2
+
+        var packed = Data(count: packedRow * height)
+        packed.withUnsafeMutableBytes { dst in
+            guard let dstBase = dst.baseAddress else { return }
+            for y in 0..<height {
+                memcpy(dstBase + y * packedRow, base + y * rowBytes, packedRow)
+            }
+        }
+
+        // Интринсики глубины = интринсики видео, отмасштабированные под разрешение depth
+        var fx = Float(width), fy = Float(width), cx = Float(width) / 2, cy = Float(height) / 2
+        if let cal = depth.cameraCalibrationData {
+            let k = cal.intrinsicMatrix
+            let ref = cal.intrinsicMatrixReferenceDimensions
+            if ref.width > 0 {
+                let s = Float(width) / Float(ref.width)
+                fx = k.columns.0.x * s
+                fy = k.columns.1.y * s
+                cx = k.columns.2.x * s
+                cy = k.columns.2.y * s
+            }
+        }
+
+        let fps = max(1, Int(camera.activeFPS))
+        let maxInFlight = max(1024 * 1024, settings.bitrateMbps * 1_000_000 / 8 / fps * 8)
+        if sender.bytesInFlight < maxInFlight {
+            sender.send(.depth, payload: StreamPacketBuilder.depth(tNs: tNs, width: width, height: height,
+                                                                   fx: fx, fy: fy, cx: cx, cy: cy,
+                                                                   float16Depth: packed))
+        }
+
+        updateDepthPreview(packed, width: width, height: height)
+    }
+
+    private func updateDepthPreview(_ packed: Data, width: Int, height: Int) {
+        let now = CACurrentMediaTime()
+        guard now - lastDepthPreviewTime >= 0.2 else { return }
+        lastDepthPreviewTime = now
+
+        stateLock.lock()
+        let mode = currentDisplayMode
+        let rgb = lastRGBPreview
+        stateLock.unlock()
+        guard mode != .rgbOnly else { return }
+
+        var gray = [UInt8](repeating: 0, count: width * height)
+        packed.withUnsafeBytes { raw in
+            let src = raw.bindMemory(to: Float16.self)
+            for i in 0..<(width * height) {
+                let d = Float(src[i])
+                // 0.2 м → белый, 5 м → чёрный
+                let t = d.isFinite ? min(max((5.0 - d) / 4.8, 0), 1) : 0
+                gray[i] = UInt8(t * 255)
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(gray) as CFData),
+              let cg = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8,
+                               bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                               bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider,
+                               decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return }
+        let depthImage = UIImage(cgImage: cg)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            switch mode {
+            case .rgbOnly: break
+            case .depthOnly: self.previewCallback(UIImage(), depthImage)
+            case .both: self.previewCallback(rgb ?? UIImage(), depthImage)
+            }
+        }
+    }
+
     deinit {
-        encoder?.stopEncoding()
+        imu.stop()
+        encoder?.invalidate()
     }
 }

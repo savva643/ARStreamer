@@ -4,30 +4,47 @@ import SwiftUI
 import Combine
 
 // 🔹 ЛОГИРОВАНИЕ В ФАЙЛ
-func logToFile(_ message: String) {
-    let dateFormatter = DateFormatter()
-    dateFormatter.dateFormat = "HH:mm:ss.SSS"
-    let timestamp = dateFormatter.string(from: Date())
-    let logMessage = "[\(timestamp)] \(message)\n"
-    
-    if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-        let logFilePath = documentsPath.appendingPathComponent("ARStreamer.log")
-        
-        if FileManager.default.fileExists(atPath: logFilePath.path) {
-            if let fileHandle = FileHandle(forWritingAtPath: logFilePath.path) {
-                fileHandle.seekToEndOfFile()
-                if let data = logMessage.data(using: .utf8) {
-                    fileHandle.write(data)
-                }
-                fileHandle.closeFile()
+// Асинхронно на отдельной очереди, файл открыт один раз: логирование больше не тормозит
+// видео/IMU потоки (раньше каждый вызов создавал DateFormatter и открывал файл).
+private final class FileLogger {
+    static let shared = FileLogger()
+
+    private let queue = DispatchQueue(label: "glaski.log", qos: .utility)
+    private var handle: FileHandle?
+    private let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    private init() {
+        queue.async {
+            guard let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+            let url = dir.appendingPathComponent("ARStreamer.log")
+            if !FileManager.default.fileExists(atPath: url.path) {
+                FileManager.default.createFile(atPath: url.path, contents: nil)
             }
-        } else {
-            try? logMessage.write(toFile: logFilePath.path, atomically: true, encoding: .utf8)
+            self.handle = try? FileHandle(forWritingTo: url)
+            self.handle?.seekToEndOfFile()
         }
     }
-    
-    // Также выводим в консоль
+
+    func write(_ message: String) {
+        let now = Date()
+        queue.async {
+            let line = "[\(self.formatter.string(from: now))] \(message)\n"
+            if let data = line.data(using: .utf8) {
+                self.handle?.write(data)
+            }
+        }
+    }
+}
+
+func logToFile(_ message: String) {
+    FileLogger.shared.write(message)
+    #if DEBUG
     print(message)
+    #endif
 }
 
 @MainActor
@@ -50,9 +67,29 @@ class NetworkConnectViewModel: ObservableObject {
 
     @AppStorage("serverIP") var serverIP: String = "192.168.1.100"
     @AppStorage("serverPort") private var serverPort: String = "9000"
-    @AppStorage("streamMode") private var streamMode: String = "TCP_JPEG"
+    @AppStorage("streamMode") private var streamModeRaw: String = "USB"
     @AppStorage("sendDepth") var sendDepth: Bool = false
     @AppStorage("targetFPS") private var targetFPS: String = "60"
+    @AppStorage("videoCodec") private var videoCodec: String = "H264"
+    @AppStorage("videoResolution") private var videoResolution: String = "1440p"
+    @AppStorage("bitrateMbps") private var bitrateMbps: String = "30"
+
+    /// UDP_H264 из старых версий больше не поддерживается (кадры > 64 KB не влезают в датаграмму) → Wi-Fi TCP
+    private var streamMode: String {
+        let m = streamModeRaw.uppercased()
+        return m == "UDP_H264" ? "TCP_H264" : m
+    }
+
+    private func makeSettings(useLiDAR: Bool) -> StreamSettings {
+        var s = StreamSettings()
+        s.streamMode = streamMode
+        s.codec = videoCodec
+        s.resolution = videoResolution
+        s.targetFPS = Int(targetFPS) ?? 60
+        s.bitrateMbps = Int(bitrateMbps) ?? 30
+        s.useLiDAR = useLiDAR
+        return s
+    }
     
     private var connection: NWConnection?
     private var arStreamer: ARStreamer?
@@ -104,14 +141,9 @@ class NetworkConnectViewModel: ObservableObject {
         let host = NWEndpoint.Host(serverIP)
         let port = NWEndpoint.Port(integerLiteral: portInt)
         
-        let params: NWParameters
-        switch streamMode.uppercased() {
-        case "UDP_H264":
-            params = NWParameters.udp
-            params.requiredInterfaceType = .wifi
-        default:
-            params = NWParameters.tcp
-        }
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.noDelay = true
+        let params = NWParameters(tls: nil, tcp: tcpOptions)
         
         params.serviceClass = .interactiveVideo
         if let options = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
@@ -132,8 +164,8 @@ class NetworkConnectViewModel: ObservableObject {
                 
                 switch newState {
                 case .ready:
-                    self.statusText = currentStreamMode.uppercased() == "UDP_H264" ?
-                        "✅ Подключено (H.264)" : "✅ Подключено (TCP)"
+                    self.statusText = currentStreamMode == "TCP_JPEG" ?
+                        "✅ Подключено (JPEG)" : "✅ Подключено (\(self.videoCodec))"
                     self.fetchLocalIP()
                     self.startStreaming()
                     self.startPingTimer()
@@ -199,20 +231,52 @@ class NetworkConnectViewModel: ObservableObject {
     }
 
     // MARK: - Запуск стриминга
+    private func makeStreamer(connection: NWConnection, useLiDAR: Bool) -> ARStreamer {
+        let settings = makeSettings(useLiDAR: useLiDAR)
+        let streamer = ARStreamer(
+            connection: connection,
+            settings: settings,
+            previewCallback: { [weak self] rgbImage, depthImage in
+                Task { @MainActor in
+                    guard let self = self else { return }
+                    if let depthImg = depthImage {
+                        // защита от повторной отправки того же depth-кадра
+                        if let last = self.lastDepthImage, last === depthImg { return }
+                        self.lastDepthImage = depthImg
+                        self.depthPreviewImage = depthImg
+                    }
+                    if rgbImage.size != .zero {
+                        self.previewImage = rgbImage
+                        self.statusText = "📹 Трансляция \(settings.resolution) @\(settings.targetFPS)"
+                    }
+                    // счётчик для перехода в экран трансляции (onChange в ContentView)
+                    self.frameCount += 1
+                }
+            },
+            fpsCallback: { [weak self] fps, bytesPerSecond in
+                Task { @MainActor in
+                    self?.fpsText = "\(fps) FPS"
+                    self?.networkSpeedText = "\(bytesPerSecond / 1024) KB/s"
+                }
+            },
+            usbManager: streamMode == "USB" ? usbManager : nil
+        )
+        streamer.imuUpdateCallback = { [weak self] imuStr, posStr in
+            Task { @MainActor in
+                self?.imuText = imuStr
+                self?.positionText = posStr
+            }
+        }
+        return streamer
+    }
+
     private func startStreaming() {
-        logToFile("🎬 startStreaming() called with streamMode=\(streamMode)")
-        statusText = "🎬 Инициализация камеры..."
-        logToFile("statusText set to: 🎬 Инициализация камеры...")
-        
-        // 🔹 ИСПРАВЛЕНИЕ: для USB создаем фиктивное соединение
+        logToFile("🎬 startStreaming() streamMode=\(streamMode)")
+
         let effectiveConnection: NWConnection
-        
-        if streamMode.uppercased() == "USB" {
-            logToFile("Creating dummy connection for USB mode")
-            // Создаем фиктивное соединение для USB (оно не будет использоваться)
-            let host = NWEndpoint.Host("127.0.0.1")
-            let port = NWEndpoint.Port(integerLiteral: 1)
-            effectiveConnection = NWConnection(host: host, port: port, using: .tcp)
+        if streamMode == "USB" {
+            // Для USB данные идут через USBEthernetManager, NWConnection не используется
+            effectiveConnection = NWConnection(host: "127.0.0.1", port: 1, using: .tcp)
         } else {
             guard let connection = connection else {
                 logToFile("❌ No connection for network mode")
@@ -221,155 +285,43 @@ class NetworkConnectViewModel: ObservableObject {
             }
             effectiveConnection = connection
         }
-        
-        let fps = Int(targetFPS) ?? 60
-        
-        // 🔹 СИНХРОНИЗИРУЕМ LiDAR С НАСТРОЙКАМИ
-        let shouldUseLiDAR = self.sendDepth
-        
-        logToFile("🎬 Creating ARStreamer: useLiDAR=\(shouldUseLiDAR), fps=\(fps)")
-        statusText = "🎬 Создание ARStreamer..."
-        logToFile("statusText set to: 🎬 Создание ARStreamer...")
-        
-        // 🔹 ИСПРАВИЛ: правильный callback с двумя изображениями
-        arStreamer = ARStreamer(
-            connection: effectiveConnection,
-            useLiDAR: shouldUseLiDAR,
-            streamMode: streamMode,
-            compressionQuality: 0.8,
-            targetFPS: fps,
-            previewCallback: { [weak self] rgbImage, depthImage in
-                let msg = "📸 previewCallback: rgbImage=\(rgbImage.size), depthImage=\(depthImage?.size ?? .zero)"
-                logToFile(msg)
-                
-                // 🔹 ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: если depthImage такой же как предыдущий - игнорируем
-                if let depthImg = depthImage, let self = self {
-                    if let lastDepth = self.lastDepthImage, lastDepth === depthImg {
-                        logToFile("⚠️ DUPLICATE depth image detected - skipping")
-                        return
-                    }
-                    self.lastDepthImage = depthImg
-                }
-                
-                Task { @MainActor in
-                    logToFile("📸 Setting previewImage on MainActor: \(rgbImage.size)")
-                    self?.previewImage = rgbImage
-                    logToFile("✅ previewImage set: \(self?.previewImage?.size ?? .zero)")
-                    
-                    // 🔹 ВАЖНО: обновляем depthPreviewImage
-                    if let depthImg = depthImage {
-                        self?.depthPreviewImage = depthImg
-                        logToFile("✅ depthPreviewImage set: \(depthImg.size)")
-                    } else {
-                        logToFile("⚠️ depthPreviewImage is nil")
-                    }
-                    
-                    self?.statusText = "📹 Видео: \(Int(rgbImage.size.width))x\(Int(rgbImage.size.height))"
-                    logToFile("✅ statusText updated: \(self?.statusText ?? "nil")")
-                    // 🔹 ВАЖНО: увеличиваем счетчик чтобы onChange срабатывал
-                    self?.frameCount += 1
-                    logToFile("📊 frameCount incremented: \(self?.frameCount ?? 0)")
-                }
-            },
-            fpsCallback: { [weak self] fps, bytes in
-                Task { @MainActor in
-                    self?.fpsText = "\(fps) FPS"
-                    self?.networkSpeedText = "\(bytes / 1024) KB/s"
-                }
-            },
-            usbManager: streamMode.uppercased() == "USB" ? usbManager : nil
-        )
-        
-        // 🔹 ДОБАВИЛ: callback для обновления IMU и позиции
-        arStreamer?.imuUpdateCallback = { [weak self] imuStr, posStr in
-            Task { @MainActor in
-                self?.imuText = imuStr
-                self?.positionText = posStr
-            }
-        }
-        
-        logToFile("🎬 ARStreamer created, calling startStreaming()")
+
+        arStreamer?.stopStreaming()
+        arStreamer = makeStreamer(connection: effectiveConnection, useLiDAR: sendDepth)
         statusText = "🎬 Запуск камеры..."
-        logToFile("statusText set to: 🎬 Запуск камеры...")
-        
-        // 🔹 ВАЖНО: для USB сразу запускаем AR сессию
-        logToFile("Calling arStreamer?.startStreaming()")
         arStreamer?.startStreaming()
-        logToFile("✅ arStreamer?.startStreaming() completed")
-        
-        logToFile("🎬 startStreaming() completed")
         statusText = "⏳ Ожидание видео от камеры..."
-        logToFile("statusText set to: ⏳ Ожидание видео от камеры...")
     }
 
     func switchDisplayMode(_ mode: ARStreamer.DisplayMode) {
         arStreamer?.switchDisplayMode(mode)
-        // 🔹 Сбрасываем lastDepthImage при смене режима чтобы избежать конфликтов
         lastDepthImage = nil
     }
     
     // MARK: - Перезапуск
     func restartSession(useLiDAR: Bool) {
-        print("🔄 restartSession called: useLiDAR=\(useLiDAR)")
-        logToFile("🔄 restartSession called: useLiDAR=\(useLiDAR)")
-        
-        // 🔹 ОБНОВЛЯЕМ НАСТРОЙКУ sendDepth при изменении LiDAR
+        logToFile("🔄 restartSession useLiDAR=\(useLiDAR)")
         self.sendDepth = useLiDAR
-        
-        // 🔹 ВАЖНО: запускаем в фоне чтобы не заморозить UI
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            print("🔄 Stopping old session...")
-            self?.arStreamer?.stopStreaming()
-            
-            guard let connection = self?.connection else {
-                print("❌ restartSession: connection is nil")
+
+        arStreamer?.stopStreaming()
+        arStreamer = nil
+
+        let connection: NWConnection
+        if streamMode == "USB" {
+            connection = NWConnection(host: "127.0.0.1", port: 1, using: .tcp)
+        } else {
+            guard let c = self.connection else {
+                logToFile("❌ restartSession: connection is nil")
                 return
             }
-            
-            let fps = Int(self?.targetFPS ?? "60") ?? 60
-            
-            print("🔄 Creating new ARStreamer with useLiDAR=\(useLiDAR)")
-            
-            // 🔹 ИСПРАВИЛ: правильный callback с двумя изображениями
-            let newStreamer = ARStreamer(
-                connection: connection,
-                useLiDAR: useLiDAR,
-                streamMode: self?.streamMode ?? "TCP_JPEG",
-                compressionQuality: 0.8,
-                targetFPS: fps,
-                previewCallback: { [weak self] rgbImage, depthImage in
-                    print("📸 previewCallback (restartSession): rgbImage=\(rgbImage.size), depthImage=\(depthImage?.size ?? .zero)")
-                    
-                    // 🔹 ЗАЩИТА ОТ ДУБЛИРОВАНИЯ
-                    if let depthImg = depthImage, let self = self {
-                        if let lastDepth = self.lastDepthImage, lastDepth === depthImg {
-                            print("⚠️ DUPLICATE depth image detected in restartSession - skipping")
-                            return
-                        }
-                        self.lastDepthImage = depthImg
-                    }
-                    
-                    Task { @MainActor in
-                        self?.previewImage = rgbImage
-                        self?.depthPreviewImage = depthImage
-                    }
-                },
-                fpsCallback: { [weak self] fps, bytes in
-                    Task { @MainActor in
-                        self?.fpsText = "\(fps)"
-                        self?.networkSpeedText = "\(bytes / 1024) KB/s"
-                    }
-                },
-                usbManager: (self?.streamMode.uppercased() == "USB") ? self?.usbManager : nil
-            )
-            
-            DispatchQueue.main.async {
-                self?.arStreamer = newStreamer
-                print("🔄 Starting new session...")
-                self?.arStreamer?.startStreaming()
-                print("✅ restartSession completed")
-                logToFile("✅ restartSession completed")
-            }
+            connection = c
+        }
+
+        // Камере нужно время, чтобы освободиться после stopRunning
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self else { return }
+            self.arStreamer = self.makeStreamer(connection: connection, useLiDAR: useLiDAR)
+            self.arStreamer?.startStreaming()
         }
     }
     
@@ -472,9 +424,9 @@ extension NetworkConnectViewModel {
     var connectionType: String {
         // 🔹 ИСПРАВИЛ: явно используем self.streamMode
         switch self.streamMode.uppercased() {
-        case "TCP_JPEG": return "TCP"
-        case "UDP_H264": return "UDP"
-        case "USB": return "USB"
+        case "TCP_JPEG": return "WI-FI JPEG"
+        case "TCP_H264": return "WI-FI \(videoCodec)"
+        case "USB": return "USB \(videoCodec)"
         default: return "—"
         }
     }

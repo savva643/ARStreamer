@@ -269,8 +269,8 @@ class USBEthernetManager: ObservableObject {
             guard let self = self else { return }
             
             if let data = data, !data.isEmpty {
-                print("📥 USB получены данные: \(data.count) байт")
-                // Обработка полученных данных
+                // ПК пока ничего не шлёт кроме приветствия — просто вычитываем
+                _ = data
             }
             
             if let error = error {
@@ -291,40 +291,29 @@ class USBEthernetManager: ObservableObject {
         }
     }
     
-    // 🔹 УПРОЩЕННЫЙ МЕТОД ОТПРАВКИ ДАННЫХ
-    func sendData(_ data: Data) {
+    // 🔹 ОТПРАВКА ПАКЕТА (горячий путь — без логов на каждый пакет)
+    // completion вызывается всегда, чтобы PacketSender корректно считал байты «в полёте».
+    func sendPacket(_ data: Data, completion: @escaping (Error?) -> Void) {
         guard isConnected, let connection = connection else {
-            print("⚠️ USB: соединение не готово для отправки")
+            completion(nil)
             return
         }
-        
-        connection.send(content: data, completion: .contentProcessed({ error in
-            if let error = error {
-                print("❌ USB ошибка отправки: \(error)")
-                DispatchQueue.main.async {
-                    if self.isConnected {
-                        self.connectionStatus = "❌ Ошибка отправки"
-                        self.isConnected = false
-                        self.startUSBConnection()
-                    }
-                }
-            } else {
-                // 🔹 ЛОГИРОВАНИЕ ПО ТИПУ ДАННЫХ
-                if data.count >= 1 {
-                    let dataType = data[0]
-                    switch dataType {
-                    case 0x01:
-                        print("📤 USB RGB отправлен | размер: \(data.count) байт")
-                    case 0x02:
-                        print("📤 USB LiDAR отправлен | размер: \(data.count) байт")
-                    case 0x03:
-                        print("📤 USB сенсоры отправлены | размер: \(data.count) байт")
-                    default:
-                        print("📤 USB данные отправлены | размер: \(data.count) байт")
-                    }
-                }
+
+        connection.send(content: data, completion: .contentProcessed({ [weak self] error in
+            completion(error)
+            guard let error = error else { return }
+            print("❌ USB ошибка отправки: \(error)")
+            DispatchQueue.main.async {
+                guard let self = self, self.isConnected else { return }
+                self.connectionStatus = "❌ Ошибка отправки"
+                self.isConnected = false
+                self.startUSBConnection()
             }
         }))
+    }
+
+    func sendData(_ data: Data) {
+        sendPacket(data) { _ in }
     }
     
     func disconnect() {
