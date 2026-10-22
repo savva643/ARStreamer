@@ -1,5 +1,6 @@
 import Foundation
 import CoreMedia
+import simd
 
 // MARK: - GlaskiOS sensor stream protocol v2
 //
@@ -15,6 +16,9 @@ enum StreamPacketType: UInt8 {
     case imu = 0x22
     case depth = 0x23
     case audio = 0x24               // микрофон: PCM16
+    case displayRequest = 0x26      // «верни картинку лаунчера»: режим, размер экрана, FOV
+    case returnAck = 0x27           // кадр с ПК показан (время показа, запрос keyframe)
+    case returnVideo = 0x30         // ПК -> телефон: готовый кадр лаунчера + поза для доворота
     case deviceOrientation = 0x0A   // legacy: Double градусы
 }
 
@@ -160,6 +164,41 @@ enum StreamPacketBuilder {
         return w.data
     }
 
+    /// DISPLAY (40 байт): что показывать на экране телефона. tan = 0 — FOV решает ПК (как у камеры)
+    static func displayRequest(mode: UInt8, localCamera: Bool, hevc: Bool, width: Int, height: Int, fps: Int,
+                               bitrateKbps: Int, tanX: Float, tanY: Float, ipd: Float, refreshHz: Float) -> Data {
+        var w = PacketWriter(capacity: 40)
+        w.u8(mode)
+        var flags: UInt8 = 0
+        if localCamera { flags |= 1 }
+        if hevc { flags |= 2 }
+        w.u8(flags)
+        w.u16(UInt16(clamping: width))
+        w.u16(UInt16(clamping: height))
+        w.u16(UInt16(clamping: fps))
+        w.u32(UInt32(clamping: bitrateKbps))
+        w.f32(tanX)
+        w.f32(tanY)
+        w.f32(ipd)
+        w.f32(refreshHz)
+        w.u32(0)
+        w.i64(hostTimeNs())
+        return w.data
+    }
+
+    /// ACK (32 байта): кадр frameId показан в displayNs (часы телефона); frameId 0 + needKeyframe — просьба о keyframe
+    static func returnAck(frameId: UInt32, needKeyframe: Bool, receivedNs: Int64, displayNs: Int64, decodeUs: UInt32) -> Data {
+        var w = PacketWriter(capacity: 32)
+        w.u32(frameId)
+        w.u8(needKeyframe ? 1 : 0)
+        w.u8(0); w.u8(0); w.u8(0)
+        w.i64(receivedNs)
+        w.i64(displayNs)
+        w.u32(decodeUs)
+        w.u32(0)
+        return w.data
+    }
+
     static func hello() -> Data {
         var w = PacketWriter(capacity: 16)
         w.bytes(Data("GLSK".utf8))
@@ -167,6 +206,113 @@ enum StreamPacketBuilder {
         w.u16(0)
         w.i64(hostTimeNs())
         return w.data
+    }
+}
+
+// MARK: - Обратный поток (ПК -> телефон)
+
+/// Заголовок RETURN_VIDEO (128 байт), см. docs/PROTOCOL_V2.md «Возврат картинки»
+struct ReturnFrameHeader {
+    static let size = 128
+
+    var codec: UInt8 = 1             // 1 H.264, 2 HEVC
+    var keyframe = false
+    var alpha = false                // кадр вдвое выше: снизу альфа (фон — своя камера)
+    var fullRange = true
+    var bt709 = true
+    var layout: UInt8 = 1            // 1 моно, 2 SBS
+    var mode: UInt8 = 1
+    var width = 0
+    var height = 0
+    var frameId: UInt32 = 0
+    var tRefNs: Int64 = 0
+    var tTargetNs: Int64 = 0
+    var tCameraNs: Int64 = 0
+    var tSendNs: Int64 = 0
+    var predFromRef = simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+    var eyeFromDevice = simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+    var cameraFromDevice = simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+    var gyroBias = SIMD3<Double>(0, 0, 0)
+    var overscan: Float = 1
+    var tanX: Float = 1
+    var tanY: Float = 1
+    var ipd: Float = 0.063
+
+    init?(_ p: UnsafeRawBufferPointer) {
+        guard p.count >= ReturnFrameHeader.size else { return nil }
+        func u16(_ o: Int) -> Int { Int(p[o]) | (Int(p[o + 1]) << 8) }
+        func u32(_ o: Int) -> UInt32 {
+            UInt32(p[o]) | (UInt32(p[o + 1]) << 8) | (UInt32(p[o + 2]) << 16) | (UInt32(p[o + 3]) << 24)
+        }
+        func i64(_ o: Int) -> Int64 {
+            var v: UInt64 = 0
+            for i in (0..<8).reversed() { v = (v << 8) | UInt64(p[o + i]) }
+            return Int64(bitPattern: v)
+        }
+        func f32(_ o: Int) -> Float { Float(bitPattern: u32(o)) }
+        func quat(_ o: Int) -> simd_quatd {
+            let q = simd_quatd(ix: Double(f32(o)), iy: Double(f32(o + 4)), iz: Double(f32(o + 8)), r: Double(f32(o + 12)))
+            let n = simd_length(q.vector)
+            return n > 1e-6 ? simd_quatd(vector: q.vector / n) : simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+        }
+        codec = p[0]
+        let flags = p[1]
+        keyframe = flags & 1 != 0
+        alpha = flags & 2 != 0
+        fullRange = flags & 4 != 0
+        bt709 = flags & 8 != 0
+        layout = p[2]
+        mode = p[3]
+        width = u16(4)
+        height = u16(6)
+        frameId = u32(8)
+        tRefNs = i64(16)
+        tTargetNs = i64(24)
+        tCameraNs = i64(32)
+        tSendNs = i64(40)
+        predFromRef = quat(48)
+        eyeFromDevice = quat(64)
+        cameraFromDevice = quat(80)
+        gyroBias = SIMD3(Double(f32(96)), Double(f32(100)), Double(f32(104)))
+        overscan = max(1, f32(108))
+        tanX = max(0.05, f32(112))
+        tanY = max(0.05, f32(116))
+        ipd = f32(120)
+    }
+}
+
+/// Разбор входящих пакетов того же формата [type u8][seq u64 BE][size u32 BE][payload] (ПК -> телефон)
+final class IncomingPacketParser {
+    private var buffer = Data()
+    private var readPos = 0
+
+    func reset() {
+        buffer.removeAll(keepingCapacity: true)
+        readPos = 0
+    }
+
+    /// Добавить байты и вызвать onPacket для каждого целого пакета
+    func feed(_ data: Data, onPacket: (UInt8, Data) -> Void) {
+        buffer.append(data)
+        while buffer.count - readPos >= 13 {
+            let base = buffer.startIndex + readPos
+            let type = buffer[base]
+            var size = 0
+            for i in 0..<4 { size = (size << 8) | Int(buffer[base + 9 + i]) }
+            if size > 64 * 1024 * 1024 {
+                // Поток испорчен — начинаем заново (ПК пришлёт keyframe по запросу)
+                reset()
+                return
+            }
+            guard buffer.count - readPos >= 13 + size else { break }
+            let payload = buffer.subdata(in: (base + 13)..<(base + 13 + size))
+            readPos += 13 + size
+            onPacket(type, payload)
+        }
+        if readPos > 0 && (readPos == buffer.count || readPos > 1 << 20) {
+            buffer.removeSubrange(buffer.startIndex..<(buffer.startIndex + readPos))
+            readPos = 0
+        }
     }
 }
 

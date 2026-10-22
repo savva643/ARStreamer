@@ -10,6 +10,18 @@ struct SettingsView: View {
     @AppStorage("videoCodec") private var videoCodec: String = "H264"
     @AppStorage("videoResolution") private var videoResolution: String = "1440p"
     @AppStorage("bitrateMbps") private var bitrateMbps: String = "30"
+    // Картинка лаунчера с ПК на экране телефона (ReturnDisplay)
+    @AppStorage("returnLocalCamera") private var returnLocalCamera: Bool = false
+    @AppStorage("returnTimewarp") private var returnTimewarp: Bool = true
+    @AppStorage("returnRenderScale") private var returnRenderScale: Double = 0.5
+    @AppStorage("returnBitrateMbps") private var returnBitrateMbps: Double = 15
+    @AppStorage("lensInterMm") private var lensInterMm: Double = 63.9
+    @AppStorage("lensScreenMm") private var lensScreenMm: Double = 39.0
+    @AppStorage("lensOffsetYMm") private var lensOffsetYMm: Double = 0
+    @AppStorage("lensK1") private var lensK1: Double = 0.34
+    @AppStorage("lensK2") private var lensK2: Double = 0.55
+    @AppStorage("lensChroma") private var lensChroma: Double = 0.012
+    @AppStorage("lensFovDeg") private var lensFovDeg: Double = 90
 
     @Environment(\.dismiss) var dismiss
 
@@ -106,6 +118,41 @@ struct SettingsView: View {
                     }
                 }
 
+                // MARK: - Экран телефона: картинка с ПК
+                Section(header: Text("Экран iPhone: лаунчер с ПК")) {
+                    Text("Кнопка режимов в трансляции: RGB → LiDAR → оба → ПК: один глаз → ПК: два глаза → ПК: VR-очки.")
+                        .font(.caption2).foregroundColor(.secondary)
+                    Toggle("Фон — камера iPhone (меньше задержка)", isOn: $returnLocalCamera)
+                    Text(returnLocalCamera
+                         ? "ПК рисует только объекты с прозрачностью, фон — живая камера телефона: задержка фона ~30–40 мс вместо ~80–120."
+                         : "Весь кадр рендерит ПК (видео + объекты).")
+                        .font(.caption2).foregroundColor(.secondary)
+                    Toggle("Доворот по гироскопу", isOn: $returnTimewarp)
+                    Picker("Разрешение рендера", selection: $returnRenderScale) {
+                        Text("50%").tag(0.5)
+                        Text("75%").tag(0.75)
+                        Text("100%").tag(1.0)
+                    }
+                    .pickerStyle(.segmented)
+                    Stepper("Битрейт с ПК: \(Int(returnBitrateMbps)) Мбит/с", value: $returnBitrateMbps, in: 4...60, step: 2)
+                }
+
+                Section(header: Text("VR-очки (линзы)")) {
+                    sliderRow("Между линзами", value: $lensInterMm, range: 50...75, format: "%.1f мм")
+                    sliderRow("Экран → линза", value: $lensScreenMm, range: 25...60, format: "%.1f мм")
+                    sliderRow("Центр линз по высоте", value: $lensOffsetYMm, range: -15...15, format: "%+.1f мм")
+                    sliderRow("Искажение k1", value: $lensK1, range: 0...1, format: "%.2f")
+                    sliderRow("Искажение k2", value: $lensK2, range: 0...1, format: "%.2f")
+                    sliderRow("Хроматизм", value: $lensChroma, range: 0...0.04, format: "%.3f")
+                    sliderRow("Поле зрения", value: $lensFovDeg, range: 60...120, format: "%.0f°")
+                    Button("Сбросить (Cardboard v2)") {
+                        lensInterMm = 63.9; lensScreenMm = 39.0; lensOffsetYMm = 0
+                        lensK1 = 0.34; lensK2 = 0.55; lensChroma = 0.012; lensFovDeg = 90
+                    }
+                    Text("Параметры как у профиля Google Cardboard: их печатают на коробке или в QR-коде очков. Шире камеры iPhone (~70°) по краям будет темно — так и должно быть при реальном масштабе.")
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+
                 // MARK: - Логи
                 Section(header: Text("📋 Логи")) {
                     NavigationLink(destination: LogsView()) {
@@ -130,6 +177,17 @@ struct SettingsView: View {
             }
             .navigationTitle("Настройки")
             .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, format: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(String(format: format, value.wrappedValue)).foregroundColor(.secondary).monospacedDigit()
+            }
+            Slider(value: value, in: range)
         }
     }
 }

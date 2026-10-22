@@ -250,6 +250,20 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         case rgbOnly
         case depthOnly
         case both
+        // Картинка лаунчера с ПК на экране телефона
+        case pcMono
+        case pcStereo
+        case pcLens
+
+        var returnMode: ReturnDisplayMode {
+            switch self {
+            case .pcMono: return .mono
+            case .pcStereo: return .stereo
+            case .pcLens: return .stereoLens
+            default: return .off
+            }
+        }
+        var isPC: Bool { returnMode != .off }
     }
 
     var imuUpdateCallback: ((String, String) -> Void)?
@@ -335,6 +349,11 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         logToFile("🎬 startStreaming mode=\(settings.streamMode) codec=\(settings.codec) res=\(settings.resolution) fps=\(settings.targetFPS) bitrate=\(settings.bitrateMbps)Mbit LiDAR=\(settings.useLiDAR)")
 
         sender.send(.hello, payload: StreamPacketBuilder.hello())
+        // Обратный канал: запрос «картинка на экран» и подтверждения показа идут тем же соединением
+        ReturnDisplay.shared.send = { [weak self] type, payload in
+            self?.sender.send(type, payload: payload)
+        }
+        ReturnDisplay.shared.resendRequest()
 
         imu.onPacket = { [weak self] payload in
             self?.sender.send(.imu, payload: payload)
@@ -379,6 +398,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         stateLock.lock()
         running = false
         stateLock.unlock()
+        ReturnDisplay.shared.send = nil
         imu.stop()
         mic.stop()
         sessionQueue.async { [weak self] in
@@ -486,7 +506,17 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             framesThisSecond += 1
         }
 
-        updatePreview(pixelBuffer)
+        // Фон экрана «картинка с ПК» — своя камера (минимальная задержка)
+        let display = ReturnDisplay.shared
+        if display.wantsCameraFrames {
+            display.setCameraFrame(.init(pixelBuffer: pixelBuffer, ptsNs: ptsNs + Int64(camera.exposureMicroseconds) * 500,
+                                         fx: meta.fx, fy: meta.fy, cx: meta.cx, cy: meta.cy,
+                                         fullRange: meta.fullRange, bt709: meta.bt709))
+        }
+        // Превью для интерфейса не нужно, пока экран показывает картинку с ПК
+        if display.currentMode == .off {
+            updatePreview(pixelBuffer)
+        }
         updateStats()
     }
 
@@ -611,7 +641,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         let rgb = lastRGBPreview
         let orientation = previewOrientation
         stateLock.unlock()
-        guard mode != .rgbOnly else { return }
+        guard mode == .depthOnly || mode == .both else { return }
 
         var gray = [UInt8](repeating: 0, count: width * height)
         packed.withUnsafeBytes { raw in
@@ -637,9 +667,9 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             switch mode {
-            case .rgbOnly: break
             case .depthOnly: self.previewCallback(UIImage(), depthImage)
             case .both: self.previewCallback(rgb ?? UIImage(), depthImage)
+            default: break
             }
         }
     }

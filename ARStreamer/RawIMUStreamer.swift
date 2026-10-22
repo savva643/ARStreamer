@@ -38,6 +38,8 @@ final class RawIMUStreamer {
                 guard let self = self, let d = data else { return }
                 let r = d.rotationRate
                 self.lastGyro = SIMD3(Float(r.x), Float(r.y), Float(r.z))
+                // Доворот картинки с ПК на экране телефона
+                ReturnDisplay.shared.gyro.add(tNs: secondsToNs(d.timestamp), rate: SIMD3(r.x, r.y, r.z))
                 self.pending.append(.init(tNs: secondsToNs(d.timestamp), kind: .gyro,
                                           x: Float(r.x), y: Float(r.y), z: Float(r.z)))
                 self.gyroCount += 1

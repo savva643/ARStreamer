@@ -24,6 +24,9 @@ struct ContentView: View {
         @State private var displayMode: ARStreamer.DisplayMode = .rgbOnly
         @State private var showModeText = false
         @State private var modeText = ""
+        // Экран «картинка с ПК»: кнопки прячутся (телефон в очках), касание — показать
+        @State private var controlsVisible = true
+        @State private var controlsHideToken = 0
     
     var body: some View {
         NavigationView {
@@ -375,8 +378,28 @@ struct ContentView: View {
     // 🔹 РЕЖИМ СТРИМИНГА С ДОПОЛНЕНИЯМИ
     private var streamingView: some View {
         ZStack {
-            // 🔹 ИСПРАВИЛ: Отделяем проверки RGB и LiDAR
-            if displayMode == .depthOnly, let depthPreview = viewModel.depthPreviewImage {
+            if displayMode.isPC {
+                // Картинка лаунчера с ПК (моно / стерео / линзы), доворот по гироскопу телефона
+                ReturnDisplayView()
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { showControlsTemporarily() }
+                if showDebug {
+                    VStack {
+                        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                            Text(ReturnDisplay.shared.statsText())
+                                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.black.opacity(0.6))
+                                .cornerRadius(8)
+                        }
+                        Spacer()
+                    }
+                    .padding(.top, 12)
+                }
+            } else if displayMode == .depthOnly, let depthPreview = viewModel.depthPreviewImage {
                 // Только LiDAR
                 Image(uiImage: depthPreview)
                     .resizable()
@@ -485,6 +508,7 @@ struct ContentView: View {
             
 
             // 🔹 ОБЩИЙ GeometryReader ДЛЯ ВСЕХ ЭЛЕМЕНТОВ УПРАВЛЕНИЯ
+            if !displayMode.isPC || controlsVisible {
             GeometryReader { geo in
                 if interfaceOrientation.isLandscape {
                     // АЛЬБОМНАЯ ОРИЕНТАЦИЯ
@@ -545,13 +569,30 @@ struct ContentView: View {
                     }
                 }
             }
+            }
         }
+        .statusBarHidden(displayMode.isPC)
+        .persistentSystemOverlays(displayMode.isPC ? .hidden : .automatic)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             updateOrientation()
         }
         .onAppear {
             syncInterfaceOrientation()
             useLiDAR = viewModel.sendDepth
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+    }
+
+    /// Кнопки поверх картинки с ПК: показать на 4 с
+    private func showControlsTemporarily() {
+        controlsVisible = true
+        controlsHideToken += 1
+        let token = controlsHideToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            if token == controlsHideToken && displayMode.isPC { controlsVisible = false }
         }
     }
 
@@ -669,7 +710,7 @@ struct ContentView: View {
 
     private func toggleLiDAR() {
         useLiDAR.toggle()
-        if !useLiDAR && displayMode != .rgbOnly {
+        if !useLiDAR && (displayMode == .depthOnly || displayMode == .both) {
             displayMode = .rgbOnly
         }
         viewModel.restartSession(useLiDAR: useLiDAR)
@@ -677,26 +718,35 @@ struct ContentView: View {
         showTemporaryText(useLiDAR ? "LiDAR ВКЛ" : "LiDAR ВЫКЛ")
     }
 
-    /// RGB → LiDAR → оба → RGB. Без LiDAR показывать глубину нечего — подсказываем включить
+    /// RGB → LiDAR → оба (если LiDAR включён) → ПК: один глаз → ПК: два глаза → ПК: VR-линзы → RGB
     private func cycleDisplayMode() {
-        guard useLiDAR else {
-            displayMode = .rgbOnly
-            viewModel.switchDisplayMode(displayMode)
-            showTemporaryText("Сначала включите LiDAR (◎)")
-            return
-        }
         switch displayMode {
         case .rgbOnly:
-            displayMode = .depthOnly
-            showTemporaryText("РЕЖИМ: LiDAR")
+            if useLiDAR {
+                displayMode = .depthOnly
+                showTemporaryText("РЕЖИМ: LiDAR")
+            } else {
+                displayMode = .pcMono
+                showTemporaryText("РЕЖИМ: ЛАУНЧЕР С ПК (один глаз)")
+            }
         case .depthOnly:
             displayMode = .both
             showTemporaryText("РЕЖИМ: ОБА")
         case .both:
+            displayMode = .pcMono
+            showTemporaryText("РЕЖИМ: ЛАУНЧЕР С ПК (один глаз)")
+        case .pcMono:
+            displayMode = .pcStereo
+            showTemporaryText("РЕЖИМ: ЛАУНЧЕР С ПК (два глаза)")
+        case .pcStereo:
+            displayMode = .pcLens
+            showTemporaryText("РЕЖИМ: VR-ОЧКИ (два глаза + линзы)")
+        case .pcLens:
             displayMode = .rgbOnly
             showTemporaryText("РЕЖИМ: RGB")
         }
         viewModel.switchDisplayMode(displayMode)
+        if displayMode.isPC { showControlsTemporarily() } else { controlsVisible = true }
     }
 
     // 🔹 ИСПРАВИЛ: Функция для показа временного текста
@@ -729,6 +779,12 @@ struct ContentView: View {
                 return "waveform.path.ecg"
             case .both:
                 return "square.split.2x1"
+            case .pcMono:
+                return "display"
+            case .pcStereo:
+                return "eyeglasses"
+            case .pcLens:
+                return "binoculars"
             }
         }
         
@@ -740,6 +796,10 @@ struct ContentView: View {
                 return .green
             case .both:
                 return .purple
+            case .pcMono, .pcStereo:
+                return .teal
+            case .pcLens:
+                return .pink
             }
         }
         

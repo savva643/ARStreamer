@@ -47,6 +47,18 @@ func logToFile(_ message: String) {
     #endif
 }
 
+/// Приём от ПК по Wi-Fi (картинка лаунчера для экрана телефона). Вне MainActor: колбэки NWConnection — на её очереди.
+private func receiveFromPC(_ connection: NWConnection) {
+    connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { data, _, isComplete, error in
+        if let data = data, !data.isEmpty {
+            ReturnDisplay.shared.feed(data)
+        }
+        if error == nil && !isComplete {
+            receiveFromPC(connection)
+        }
+    }
+}
+
 @MainActor
 class NetworkConnectViewModel: ObservableObject {
     @Published var localIP: String? = nil
@@ -169,6 +181,8 @@ class NetworkConnectViewModel: ObservableObject {
                 
                 switch newState {
                 case .ready:
+                    ReturnDisplay.shared.resetStream()
+                    receiveFromPC(connection)
                     self.statusText = currentStreamMode == "TCP_JPEG" ?
                         "✅ Подключено (JPEG)" : "✅ Подключено (\(self.videoCodec))"
                     self.fetchLocalIP()
@@ -304,6 +318,10 @@ class NetworkConnectViewModel: ObservableObject {
         displayMode = mode
         arStreamer?.switchDisplayMode(mode)
         lastDepthImage = nil
+        // Режимы «ПК → экран»: просим лаунчер рендерить под этот экран (или перестать)
+        if mode.returnMode != ReturnDisplay.shared.currentMode {
+            ReturnDisplay.shared.request(mode: mode.returnMode)
+        }
     }
 
     /// Поворот превью под ориентацию интерфейса (поток на ПК не поворачивается)
@@ -317,7 +335,7 @@ class NetworkConnectViewModel: ObservableObject {
     func restartSession(useLiDAR: Bool) {
         logToFile("🔄 restartSession useLiDAR=\(useLiDAR)")
         self.sendDepth = useLiDAR
-        if !useLiDAR {
+        if !useLiDAR && (displayMode == .depthOnly || displayMode == .both) {
             displayMode = .rgbOnly
             depthPreviewImage = nil
             lastDepthImage = nil
@@ -348,6 +366,8 @@ class NetworkConnectViewModel: ObservableObject {
     // MARK: - Отключение
     func disconnect() {
         stopPingTimer()
+        ReturnDisplay.shared.request(mode: .off)
+        displayMode = .rgbOnly
         arStreamer?.stopStreaming()
         arStreamer = nil
         

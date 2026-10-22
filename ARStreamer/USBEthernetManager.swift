@@ -198,6 +198,7 @@ class USBEthernetManager: ObservableObject {
                     print("🎉 USB Ethernet: успешное подключение к \(hostIP)")
                     
                     USBEthernetManager.usbHostIP = hostIP
+                    ReturnDisplay.shared.resetStream()
                     self.startReceiving()
                     
                     // 🔹 ВЫЗЫВАЕМ CALLBACK ДЛЯ ЗАПУСКА СТРИМИНГА
@@ -265,12 +266,12 @@ class USBEthernetManager: ObservableObject {
     }
     
     private func startReceiving() {
-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, context, isComplete, error in
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, context, isComplete, error in
             guard let self = self else { return }
             
             if let data = data, !data.isEmpty {
-                // ПК пока ничего не шлёт кроме приветствия — просто вычитываем
-                _ = data
+                // ПК шлёт картинку лаунчера для экрана телефона (RETURN_VIDEO)
+                ReturnDisplay.shared.feed(data)
             }
             
             if let error = error {
