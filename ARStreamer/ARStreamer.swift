@@ -20,6 +20,7 @@ struct StreamSettings {
     var targetFPS: Int = 60
     var bitrateMbps: Int = 30
     var useLiDAR: Bool = false
+    var sendMicrophone: Bool = false
     var jpegQuality: CGFloat = 0.8
 
     var preferredDimensions: (width: Int32, height: Int32) {
@@ -260,6 +261,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
 
     private let camera = CameraCapture()
     private let imu = RawIMUStreamer()
+    private let mic = MicrophoneStreamer()
     private var encoder: VideoEncoder?
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
@@ -340,6 +342,13 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         imu.onDebugText = { [weak self] a, b in self?.imuUpdateCallback?(a, b) }
         imu.start(rateHz: 100)
 
+        if settings.sendMicrophone {
+            mic.onPacket = { [weak self] payload in
+                self?.sender.send(.audio, payload: payload)
+            }
+            mic.start()
+        }
+
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             guard let result = self.camera.configure(settings: self.settings) else { return }
@@ -371,6 +380,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         running = false
         stateLock.unlock()
         imu.stop()
+        mic.stop()
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             if self.camera.session.isRunning { self.camera.session.stopRunning() }
@@ -637,5 +647,105 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     deinit {
         imu.stop()
         encoder?.invalidate()
+    }
+}
+
+
+// MARK: - Микрофон → ПК
+
+/// Микрофон iPhone: 16 кГц моно PCM16, пачки по 20 мс (пакет AUDIO протокола v2).
+/// Время пачки — host clock (общие часы с камерой и IMU).
+final class MicrophoneStreamer {
+    var onPacket: ((Data) -> Void)?
+
+    private let engine = AVAudioEngine()
+    private var converter: AVAudioConverter?
+    private let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
+    private var pending: [Int16] = []
+    private var pendingStartNs: Int64 = 0
+    private var running = false
+    private let chunk = 320   // 20 мс
+
+    func start() {
+        guard !running else { return }
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker])
+            try session.setActive(true)
+        } catch {
+            logToFile("🎙 audio session error: \(error)")
+            return
+        }
+        session.requestRecordPermission { [weak self] granted in
+            guard granted else {
+                logToFile("🎙 microphone permission denied")
+                return
+            }
+            DispatchQueue.main.async { self?.startEngine() }
+        }
+    }
+
+    private func startEngine() {
+        let input = engine.inputNode
+        let inFormat = input.outputFormat(forBus: 0)
+        guard inFormat.sampleRate > 0, let conv = AVAudioConverter(from: inFormat, to: outFormat) else {
+            logToFile("🎙 no microphone input")
+            return
+        }
+        converter = conv
+        input.installTap(onBus: 0, bufferSize: 1024, format: inFormat) { [weak self] buffer, time in
+            self?.handle(buffer: buffer, time: time)
+        }
+        do {
+            try engine.start()
+            running = true
+            logToFile("🎙 microphone streaming 16 kHz (input \(Int(inFormat.sampleRate)) Hz)")
+        } catch {
+            input.removeTap(onBus: 0)
+            logToFile("🎙 engine start error: \(error)")
+        }
+    }
+
+    func stop() {
+        guard running else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        running = false
+        pending.removeAll()
+    }
+
+    private func handle(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+        guard let converter = converter else { return }
+        let ratio = outFormat.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 32)
+        guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if fed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard error == nil, let data = out.int16ChannelData else { return }
+        let n = Int(out.frameLength)
+        if pending.isEmpty {
+            pendingStartNs = time.isHostTimeValid
+                ? Int64(AVAudioTime.seconds(forHostTime: time.hostTime) * 1_000_000_000.0)
+                : hostTimeNs()
+        }
+        pending.append(contentsOf: UnsafeBufferPointer(start: data[0], count: n))
+        while pending.count >= chunk {
+            let packet = pending.withUnsafeBufferPointer { p in
+                StreamPacketBuilder.audio(tNs: pendingStartNs, sampleRate: 16000,
+                                          samples: UnsafeBufferPointer(rebasing: p[0..<chunk]))
+            }
+            onPacket?(packet)
+            pending.removeFirst(chunk)
+            pendingStartNs += Int64(chunk) * 1_000_000_000 / 16000
+        }
     }
 }

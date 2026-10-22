@@ -14,6 +14,7 @@ enum StreamPacketType: UInt8 {
     case video = 0x21
     case imu = 0x22
     case depth = 0x23
+    case audio = 0x24               // микрофон: PCM16
     case deviceOrientation = 0x0A   // legacy: Double градусы
 }
 
@@ -144,6 +145,18 @@ enum StreamPacketBuilder {
         w.f32(cx)
         w.f32(cy)
         w.bytes(float16Depth)
+        return w.data
+    }
+
+    /// audio: [tNs i64 первого сэмпла][sampleRate u32][channels u8][format u8 = 1 PCM16][reserved u16] + сэмплы
+    static func audio(tNs: Int64, sampleRate: Int, samples: UnsafeBufferPointer<Int16>) -> Data {
+        var w = PacketWriter(capacity: 16 + samples.count * 2)
+        w.i64(tNs)
+        w.u32(UInt32(sampleRate))
+        w.u8(1)     // каналов
+        w.u8(1)     // PCM16 little-endian
+        w.u16(0)
+        w.bytes(UnsafeRawBufferPointer(samples))
         return w.data
     }
 

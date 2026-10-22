@@ -69,6 +69,7 @@ class NetworkConnectViewModel: ObservableObject {
     @AppStorage("serverPort") private var serverPort: String = "9000"
     @AppStorage("streamMode") private var streamModeRaw: String = "USB"
     @AppStorage("sendDepth") var sendDepth: Bool = false
+    @AppStorage("sendMicrophone") var sendMicrophone: Bool = false
     @AppStorage("targetFPS") private var targetFPS: String = "60"
     @AppStorage("videoCodec") private var videoCodec: String = "H264"
     @AppStorage("videoResolution") private var videoResolution: String = "1440p"
@@ -88,6 +89,7 @@ class NetworkConnectViewModel: ObservableObject {
         s.targetFPS = Int(targetFPS) ?? 60
         s.bitrateMbps = Int(bitrateMbps) ?? 30
         s.useLiDAR = useLiDAR
+        s.sendMicrophone = sendMicrophone
         return s
     }
     

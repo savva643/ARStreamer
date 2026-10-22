@@ -4,6 +4,7 @@ struct SettingsView: View {
     @AppStorage("serverIP") private var serverIP: String = "192.168.1.100"
     @AppStorage("serverPort") private var serverPort: String = "9000"
     @AppStorage("sendDepth") private var sendDepth: Bool = false
+    @AppStorage("sendMicrophone") private var sendMicrophone: Bool = false
     @AppStorage("streamMode") private var streamMode: String = "USB"
     @AppStorage("targetFPS") private var targetFPS: String = "60"
     @AppStorage("videoCodec") private var videoCodec: String = "H264"
@@ -92,6 +93,15 @@ struct SettingsView: View {
                     Toggle("Отправлять LiDAR (глубина)", isOn: $sendDepth)
                     if sendDepth {
                         Text("Сырая карта глубины Float16 с таймстемпом и интринсиками, тем же соединением. Требуется iPhone Pro с LiDAR.")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+
+                // MARK: - Микрофон
+                Section(header: Text("Звук")) {
+                    Toggle("Микрофон → ПК", isOn: $sendMicrophone)
+                    if sendMicrophone {
+                        Text("16 кГц моно, пачки по 20 мс, тем же соединением. На ПК: уровень в панели, F6 — запись в WAV, F7 — слушать в наушниках.")
                             .font(.caption2).foregroundColor(.secondary)
                     }
                 }
