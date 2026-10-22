@@ -68,6 +68,9 @@ struct VideoFrameMeta {
     var cx: Float
     var cy: Float
     var exposureUs: UInt32
+    /// Цвет исходного буфера камеры: 420f = full range; матрица из вложения kCVImageBufferYCbCrMatrixKey
+    var fullRange: Bool = true
+    var bt709: Bool = true
 }
 
 enum StreamPacketBuilder {
@@ -79,7 +82,12 @@ enum StreamPacketBuilder {
     static func video(codec: StreamVideoCodec, keyframe: Bool, meta: VideoFrameMeta, bitstream: Data) -> Data {
         var w = PacketWriter(capacity: videoHeaderSize + bitstream.count)
         w.u8(codec.rawValue)
-        w.u8(keyframe ? 1 : 0)
+        // бит 0 keyframe, бит 1 «цвет указан», бит 2 full range, бит 3 BT.709
+        var flags: UInt8 = keyframe ? 1 : 0
+        flags |= 1 << 1
+        if meta.fullRange { flags |= 1 << 2 }
+        if meta.bt709 { flags |= 1 << 3 }
+        w.u8(flags)
         w.u16(0)
         w.u16(UInt16(clamping: meta.width))
         w.u16(UInt16(clamping: meta.height))

@@ -93,6 +93,9 @@ class NetworkConnectViewModel: ObservableObject {
     
     private var connection: NWConnection?
     private var arStreamer: ARStreamer?
+    // Состояние превью переживает перезапуск стримера (переключение LiDAR)
+    private var displayMode: ARStreamer.DisplayMode = .rgbOnly
+    private var previewInterface: UIInterfaceOrientation = .landscapeRight
     private var pingTimer: Timer?
     private var usbManager: USBEthernetManager?
     
@@ -261,6 +264,8 @@ class NetworkConnectViewModel: ObservableObject {
             },
             usbManager: streamMode == "USB" ? usbManager : nil
         )
+        streamer.switchDisplayMode(displayMode)
+        streamer.setPreviewOrientation(previewInterface)
         streamer.imuUpdateCallback = { [weak self] imuStr, posStr in
             Task { @MainActor in
                 self?.imuText = imuStr
@@ -294,14 +299,27 @@ class NetworkConnectViewModel: ObservableObject {
     }
 
     func switchDisplayMode(_ mode: ARStreamer.DisplayMode) {
+        displayMode = mode
         arStreamer?.switchDisplayMode(mode)
         lastDepthImage = nil
+    }
+
+    /// Поворот превью под ориентацию интерфейса (поток на ПК не поворачивается)
+    func setPreviewOrientation(_ orientation: UIInterfaceOrientation) {
+        guard orientation != .unknown else { return }
+        previewInterface = orientation
+        arStreamer?.setPreviewOrientation(orientation)
     }
     
     // MARK: - Перезапуск
     func restartSession(useLiDAR: Bool) {
         logToFile("🔄 restartSession useLiDAR=\(useLiDAR)")
         self.sendDepth = useLiDAR
+        if !useLiDAR {
+            displayMode = .rgbOnly
+            depthPreviewImage = nil
+            lastDepthImage = nil
+        }
 
         arStreamer?.stopStreaming()
         arStreamer = nil

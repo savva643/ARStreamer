@@ -13,7 +13,9 @@ struct ContentView: View {
     @State private var mirrorPreview = false
     @State private var isConnecting = false
     @State private var lastPreviewImageSize: CGSize = .zero
-    @State private var cameraRotation: Double = 0 // 🔹 НОВОЕ: точная ориентация камеры (для UI preview)
+    // Ориентация интерфейса (а не устройства): при заблокированной ориентации UI не поворачивается,
+    // и превью/раскладка кнопок должны следовать именно ему
+    @State private var interfaceOrientation: UIInterfaceOrientation = .landscapeRight
     @State private var deviceOrientationAngle: Double = 0 // 🔹 НОВОЕ: угол ориентации для ARLauncher
     @State private var showOrientationSelection = false
     @State private var showCalibration = false
@@ -379,21 +381,19 @@ struct ContentView: View {
             } else if displayMode == .both, let preview = viewModel.previewImage, let depthPreview = viewModel.depthPreviewImage {
                 // Режим "оба сразу" - разделенный экран
                 GeometryReader { proxy in
-                    if deviceOrientation.isLandscape {
+                    if interfaceOrientation.isLandscape {
                         // 🔹 Горизонтальное разделение
                         HStack(spacing: 0) {
                             Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: proxy.size.width / 2, height: proxy.size.height)
-                                .rotationEffect(.degrees(cameraRotation))
                                 .clipped()
 
                             Image(uiImage: depthPreview)
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: proxy.size.width / 2, height: proxy.size.height)
-                                .rotationEffect(.degrees(cameraRotation))
                                 .clipped()
                         }
                         .frame(width: proxy.size.width, height: proxy.size.height)
@@ -425,7 +425,6 @@ struct ContentView: View {
                 Image(uiImage: mirrorPreview ? preview.mirroredHorizontally() : preview)
                     .resizable()
                     .scaledToFill()
-                    .rotationEffect(.degrees(cameraRotation))
                     .ignoresSafeArea()
             } else {
                 // 🔹 ОТЛАДКА: показываем статус если нет изображения
@@ -479,7 +478,7 @@ struct ContentView: View {
 
             // 🔹 ОБЩИЙ GeometryReader ДЛЯ ВСЕХ ЭЛЕМЕНТОВ УПРАВЛЕНИЯ
             GeometryReader { geo in
-                if deviceOrientation.isLandscape {
+                if interfaceOrientation.isLandscape {
                     // АЛЬБОМНАЯ ОРИЕНТАЦИЯ
                     HStack {
                         if displayMode == .both {
@@ -542,6 +541,10 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             updateOrientation()
         }
+        .onAppear {
+            syncInterfaceOrientation()
+            useLiDAR = viewModel.sendDepth
+        }
     }
 
     // 🔹 ВЫНЕС КНОПКИ В ОТДЕЛЬНЫЕ КОМПОНЕНТЫ ДЛЯ ПОВТОРНОГО ИСПОЛЬЗОВАНИЯ
@@ -550,11 +553,7 @@ struct ContentView: View {
     // Кнопки для альбомной ориентации
     private var controlButtonsLandscape: some View {
         Group {
-            Button(action: {
-                useLiDAR.toggle()
-                viewModel.restartSession(useLiDAR: useLiDAR)
-                showTemporaryText(useLiDAR ? "LiDAR ВКЛ" : "LiDAR ВЫКЛ")
-            }) {
+            Button(action: { toggleLiDAR() }) {
                 Image(systemName: "scope")
                     .font(.title2)
                     .foregroundColor(.white)
@@ -563,20 +562,7 @@ struct ContentView: View {
                     .clipShape(Circle())
             }
 
-            Button(action: {
-                switch displayMode {
-                case .rgbOnly:
-                    displayMode = useLiDAR ? .depthOnly : .both
-                    showTemporaryText("РЕЖИМ: LiDAR")
-                case .depthOnly:
-                    displayMode = .both
-                    showTemporaryText("РЕЖИМ: ОБА")
-                case .both:
-                    displayMode = .rgbOnly
-                    showTemporaryText("РЕЖИМ: RGB")
-                }
-                viewModel.switchDisplayMode(displayMode)
-            }) {
+            Button(action: { cycleDisplayMode() }) {
                 Image(systemName: displayModeIcon)
                     .font(.title2)
                     .foregroundColor(.white)
@@ -621,11 +607,7 @@ struct ContentView: View {
     // Кнопки для портретной ориентации
     private var controlButtonsPortrait: some View {
         Group {
-            Button(action: {
-                useLiDAR.toggle()
-                viewModel.restartSession(useLiDAR: useLiDAR)
-                showTemporaryText(useLiDAR ? "LiDAR ВКЛ" : "LiDAR ВЫКЛ")
-            }) {
+            Button(action: { toggleLiDAR() }) {
                 Image(systemName: "scope")
                     .font(.title2)
                     .foregroundColor(.white)
@@ -634,20 +616,7 @@ struct ContentView: View {
                     .clipShape(Circle())
             }
 
-            Button(action: {
-                switch displayMode {
-                case .rgbOnly:
-                    displayMode = useLiDAR ? .depthOnly : .both
-                    showTemporaryText("РЕЖИМ: LiDAR")
-                case .depthOnly:
-                    displayMode = .both
-                    showTemporaryText("РЕЖИМ: ОБА")
-                case .both:
-                    displayMode = .rgbOnly
-                    showTemporaryText("РЕЖИМ: RGB")
-                }
-                viewModel.switchDisplayMode(displayMode)
-            }) {
+            Button(action: { cycleDisplayMode() }) {
                 Image(systemName: displayModeIcon)
                     .font(.title2)
                     .foregroundColor(.white)
@@ -689,6 +658,38 @@ struct ContentView: View {
         }
     }
 
+
+    private func toggleLiDAR() {
+        useLiDAR.toggle()
+        if !useLiDAR && displayMode != .rgbOnly {
+            displayMode = .rgbOnly
+        }
+        viewModel.restartSession(useLiDAR: useLiDAR)
+        viewModel.switchDisplayMode(displayMode)
+        showTemporaryText(useLiDAR ? "LiDAR ВКЛ" : "LiDAR ВЫКЛ")
+    }
+
+    /// RGB → LiDAR → оба → RGB. Без LiDAR показывать глубину нечего — подсказываем включить
+    private func cycleDisplayMode() {
+        guard useLiDAR else {
+            displayMode = .rgbOnly
+            viewModel.switchDisplayMode(displayMode)
+            showTemporaryText("Сначала включите LiDAR (◎)")
+            return
+        }
+        switch displayMode {
+        case .rgbOnly:
+            displayMode = .depthOnly
+            showTemporaryText("РЕЖИМ: LiDAR")
+        case .depthOnly:
+            displayMode = .both
+            showTemporaryText("РЕЖИМ: ОБА")
+        case .both:
+            displayMode = .rgbOnly
+            showTemporaryText("РЕЖИМ: RGB")
+        }
+        viewModel.switchDisplayMode(displayMode)
+    }
 
     // 🔹 ИСПРАВИЛ: Функция для показа временного текста
     private func showTemporaryText(_ text: String) {
@@ -767,7 +768,7 @@ struct ContentView: View {
             // 🔹 IMU И ПОЗИЦИЯ
             Group {
                 DebugRow(icon: "gyroscope", title: "IMU", value: viewModel.imuText)
-                DebugRow(icon: "location.circle", title: "Позиция", value: viewModel.positionText)
+                DebugRow(icon: "metronome", title: "Частота IMU", value: viewModel.positionText)
             }
         }
         .padding(12)
@@ -784,34 +785,29 @@ struct ContentView: View {
         let o = UIDevice.current.orientation
         if o.isValidInterfaceOrientation {
             deviceOrientation = o
-
-            // 🔹 Вычисляем правильный угол поворота камеры в зависимости от ориентации
-            // Важно: deviceOrientationAngle отправляется на PC для компенсации гироскопа
+            // Legacy-пакет для ПК (ПК определяет крепление по гравитации и от него не зависит)
             switch o {
-            case .portrait:
-                cameraRotation = 0
-                deviceOrientationAngle = 0
-                print("📱 Portrait: preview 180°, device 0°")
-            case .portraitUpsideDown:
-                cameraRotation = 0
-                deviceOrientationAngle = 180
-                print("📱 Portrait Upside Down: preview 0°, device 180°")
-            case .landscapeLeft:
-                // Провод слева - iPhone повёрнут на 270° (или -90°)
-                cameraRotation = 180
-                deviceOrientationAngle = 270
-                print("📱 Landscape Left (провод слева): device 270°")
-            case .landscapeRight:
-                // Провод справа - iPhone повёрнут на 90°
-                cameraRotation = 180
-                deviceOrientationAngle = 90
-                print("📱 Landscape Right (провод справа): device 90°")
-            default:
-                cameraRotation = 180
-                deviceOrientationAngle = 0
+            case .portrait: deviceOrientationAngle = 0
+            case .portraitUpsideDown: deviceOrientationAngle = 180
+            case .landscapeLeft: deviceOrientationAngle = 270
+            case .landscapeRight: deviceOrientationAngle = 90
+            default: deviceOrientationAngle = 0
             }
             viewModel.sendOrientation(degrees: deviceOrientationAngle)
         }
+        syncInterfaceOrientation()
+        // Интерфейс поворачивается с анимацией уже после уведомления об устройстве — перечитываем
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { syncInterfaceOrientation() }
+    }
+
+    private func syncInterfaceOrientation() {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive } ??
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        guard let current = scene?.interfaceOrientation, current != .unknown else { return }
+        interfaceOrientation = current
+        viewModel.setPreviewOrientation(current)
     }
 }
 
@@ -858,26 +854,28 @@ struct InfoView: View {
                     InfoSection(title: "🎯 Назначение", content: "Приложение для трансляции AR-контента с устройства iOS на ПК в реальном времени с минимальной задержкой.")
                     
                     InfoSection(title: "🔧 Режимы передачи", content: """
-                    • TCP (JPEG) - Надежный, хорошее качество
-                    • UDP (H.264) - Высокая скорость, до 60 FPS  
-                    • USB - Максимальное качество, минимальная задержка
+                    • USB (режим модема) — рекомендуется: минимальная задержка, порт ПК 9001
+                    • Wi-Fi (TCP) — H.264/HEVC, порт ПК 9000
+                    • TCP JPEG — только для отладки
                     """)
-                    
-                    InfoSection(title: "📡 LiDAR данные", content: "Передача карты глубины сенсора LiDAR для AR-приложений. Доступно на iPhone 12 Pro и новее.")
-                    
-                    InfoSection(title: "⚡ Управление в режиме трансляции", content: """
-                    Портретная ориентация:
-                    • ❌ - Остановить трансляцию (вернуться в меню)
-                    • 🎯 - Вкл/Выкл LiDAR
-                    • 🔁 - Зеркалить изображение
-                    • 📊 - Показать/скрыть метрики
-                    • 💡 - Эта инструкция
 
-                    Альбомная ориентация:
-                    • Все кнопки слева, метрики справа
-                    • Такие же функции как в портретной
+                    InfoSection(title: "📡 Что уходит на ПК", content: """
+                    • Видео камеры (H.264/HEVC) с интринсиками и временем каждого кадра
+                    • Сырой IMU: гироскоп и акселерометр 100 Гц, магнитометр 50 Гц
+                    • Глубина LiDAR (если включена), выровненная с кадром камеры
+                    Поток всегда в родной ориентации сенсора: поворот телефона его не меняет, \
+                    ПК сам определяет, как телефон стоит в шлеме.
                     """)
-                    
+
+                    InfoSection(title: "⚡ Кнопки в режиме трансляции", content: """
+                    • ◎ — LiDAR вкл/выкл (поток перезапускается на ~0.3 с)
+                    • 📷 — превью: RGB → LiDAR → оба (нужен включённый LiDAR)
+                    • ✕ — остановить трансляцию и вернуться в меню
+                    • ⏱ — метрики: FPS, скорость, пинг, частота IMU
+                    • ⓘ — эта инструкция
+                    Превью на телефоне поворачивается вместе с интерфейсом; в портрете кнопки снизу, в ландшафте слева.
+                    """)
+
                     InfoSection(title: "🔙 Возврат в меню", content: "Нажмите кнопку ❌ в режиме трансляции чтобы вернуться в главное меню и остановить передачу данных.")
                 }
                 .padding()

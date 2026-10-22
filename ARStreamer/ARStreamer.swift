@@ -161,6 +161,7 @@ final class CameraCapture {
         }
 
         if let connection = videoOutput.connection(with: .video) {
+            Self.lockSensorOrientation(connection)
             if connection.isVideoStabilizationSupported {
                 connection.preferredVideoStabilizationMode = .off
             }
@@ -169,10 +170,32 @@ final class CameraCapture {
             }
         }
 
+        // Глубина — в той же (родной) ориентации, что и видео: карта LiDAR выровнена с кадром камеры
+        if let depthConnection = depthOutput?.connection(with: .depthData) {
+            Self.lockSensorOrientation(depthConnection)
+        }
+
         horizontalFOV = format.videoFieldOfView
         let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
         logToFile("✅ Camera \(device.localizedName): \(dims.width)x\(dims.height) @\(Int(activeFPS)) fps, depth=\(hasDepth), HFOV=\(format.videoFieldOfView)°")
         return Result(width: dims.width, height: dims.height, fps: activeFPS, depth: hasDepth)
+    }
+
+    /// Поток всегда в родной ориентации сенсора (ландшафт), независимо от поворота телефона и UI.
+    /// Тогда интринсики, оси камеры и IMU постоянны, а ПК сам определяет крепление по гравитации.
+    /// Поворачивается только превью на экране телефона.
+    private static func lockSensorOrientation(_ connection: AVCaptureConnection) {
+        if #available(iOS 17.0, *) {
+            if connection.isVideoRotationAngleSupported(0) {
+                connection.videoRotationAngle = 0
+            }
+        } else if connection.isVideoOrientationSupported {
+            connection.videoOrientation = .landscapeRight
+        }
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = false
+        }
     }
 
     /// Фиксирует фокус после того как автофокус сошёлся: при изменении фокуса меняются интринсики.
@@ -256,7 +279,8 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
     private let stateLock = NSLock()
     private var currentDisplayMode: DisplayMode = .rgbOnly
     private var lastRGBPreview: UIImage?
-    private var uiOrientation: UIDeviceOrientation = .landscapeRight
+    /// Как повернуть кадр сенсора, чтобы он стоял прямо в текущей ориентации интерфейса
+    private var previewOrientation: CGImagePropertyOrientation = .up
     private var running = false
 
     init(connection: NWConnection,
@@ -304,7 +328,6 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         stateLock.lock()
         guard !running else { stateLock.unlock(); return }
         running = true
-        uiOrientation = UIDevice.current.orientation
         stateLock.unlock()
 
         logToFile("🎬 startStreaming mode=\(settings.streamMode) codec=\(settings.codec) res=\(settings.resolution) fps=\(settings.targetFPS) bitrate=\(settings.bitrateMbps)Mbit LiDAR=\(settings.useLiDAR)")
@@ -374,9 +397,22 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         encoder?.requestKeyframe()
     }
 
+    /// Ориентация интерфейса → поворот превью. Буфер сенсора «прямой» в landscapeRight интерфейса
+    /// (кнопка Home / Dynamic Island справа). Поток на ПК при этом не поворачивается.
+    func setPreviewOrientation(_ interface: UIInterfaceOrientation) {
+        let o: CGImagePropertyOrientation
+        switch interface {
+        case .landscapeRight: o = .up
+        case .landscapeLeft: o = .down
+        case .portrait: o = .right
+        case .portraitUpsideDown: o = .left
+        default: return
+        }
+        stateLock.lock(); previewOrientation = o; stateLock.unlock()
+    }
+
     /// Legacy: угол ориентации устройства (градусы) — ПК больше не зависит от него (ориентация по гравитации)
     func sendOrientation(degrees: Double) {
-        stateLock.lock(); uiOrientation = UIDevice.current.orientation; stateLock.unlock()
         var w = PacketWriter(capacity: 8)
         w.i64(Int64(bitPattern: degrees.bitPattern))
         sender.send(.deviceOrientation, payload: w.data)
@@ -403,6 +439,10 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         var meta = VideoFrameMeta(ptsNs: ptsNs, width: width, height: height,
                                   fx: 0, fy: 0, cx: Float(width) / 2, cy: Float(height) / 2,
                                   exposureUs: camera.exposureMicroseconds)
+        meta.fullRange = CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        if let matrix = CVBufferCopyAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey, nil) as? String {
+            meta.bt709 = matrix != (kCVImageBufferYCbCrMatrix_ITU_R_601_4 as String)
+        }
         if let att = CMGetAttachment(sampleBuffer, key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix,
                                      attachmentModeOut: nil) as? Data,
            att.count >= MemoryLayout<matrix_float3x3>.size {
@@ -446,7 +486,11 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
             CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): settings.jpegQuality
         ]
         guard let jpeg = ciContext.jpegRepresentation(of: image, colorSpace: CGColorSpaceCreateDeviceRGB(), options: options) else { return }
-        sender.send(.video, payload: StreamPacketBuilder.video(codec: .jpeg, keyframe: true, meta: meta, bitstream: jpeg))
+        // JPEG (JFIF) всегда YCbCr BT.601 full range, независимо от буфера камеры
+        var jpegMeta = meta
+        jpegMeta.fullRange = true
+        jpegMeta.bt709 = false
+        sender.send(.video, payload: StreamPacketBuilder.video(codec: .jpeg, keyframe: true, meta: jpegMeta, bitstream: jpeg))
     }
 
     private func updateStats() {
@@ -473,7 +517,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
 
         stateLock.lock()
         let mode = currentDisplayMode
-        let orientation = uiOrientation
+        let orientation = previewOrientation
         let lidarOn = settings.useLiDAR
         stateLock.unlock()
 
@@ -486,18 +530,8 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         }
     }
 
-    private func makePreview(_ pixelBuffer: CVPixelBuffer, orientation: UIDeviceOrientation) -> UIImage? {
-        var image = CIImage(cvPixelBuffer: pixelBuffer)
-        switch orientation {
-        case .portrait:
-            image = image.transformed(by: CGAffineTransform(rotationAngle: -.pi / 2))
-        case .portraitUpsideDown:
-            image = image.transformed(by: CGAffineTransform(rotationAngle: .pi / 2))
-        case .landscapeLeft:
-            image = image.transformed(by: CGAffineTransform(rotationAngle: .pi))
-        default:
-            break
-        }
+    private func makePreview(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> UIImage? {
+        var image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
         let longSide = max(image.extent.width, image.extent.height)
         let scale = 720 / max(longSide, 1)
         image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
@@ -565,6 +599,7 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
         stateLock.lock()
         let mode = currentDisplayMode
         let rgb = lastRGBPreview
+        let orientation = previewOrientation
         stateLock.unlock()
         guard mode != .rgbOnly else { return }
 
@@ -583,7 +618,11 @@ class ARStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapt
                                bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
                                bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider,
                                decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return }
-        let depthImage = UIImage(cgImage: cg)
+        // Карта глубины в той же ориентации сенсора, что и видео — поворачиваем так же, как RGB-превью
+        var oriented = CIImage(cgImage: cg).oriented(orientation)
+        oriented = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.origin.x, y: -oriented.extent.origin.y))
+        guard let rotated = ciContext.createCGImage(oriented, from: oriented.extent) else { return }
+        let depthImage = UIImage(cgImage: rotated)
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
