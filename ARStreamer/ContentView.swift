@@ -45,6 +45,14 @@ struct ContentView: View {
                     mainMenuView
                 }
             }
+            .onChange(of: isConnected) { connected in
+                // В режиме подключения экран не вертится (телефон в шлеме)
+                if connected {
+                    orientationManager.lockForStreaming()
+                } else {
+                    orientationManager.unlockAfterStreaming()
+                }
+            }
             .onChange(of: viewModel.frameCount) { frameCount in
                 // 🔹 КЛЮЧЕВОЕ: onChange на ZStack уровне срабатывает всегда
                 print("📊 ZStack onChange frameCount triggered: frameCount = \(frameCount), isConnecting = \(isConnecting)")
