@@ -7,11 +7,25 @@ workflows:
         XCODE_SCHEME: "ARStreamer"
       xcode: latest
     scripts:
+      - name: Download Metal Toolchain
+        script: |
+          echo "⬇️ Downloading Metal Toolchain for shader compilation..."
+          xcodebuild -downloadComponent MetalToolchain
+          echo "✅ Metal Toolchain ready"
       - name: Build unsigned .ipa
         script: |
-          xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME" \
-            --archive-xcargs "CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO"
+          xcodebuild archive \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -archivePath $HOME/build.xcarchive \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+          
+          xcodebuild -exportArchive \
+            -archivePath $HOME/build.xcarchive \
+            -exportPath $HOME/export \
+            -exportOptionsPlist exportOptions.plist
     artifacts:
-      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.ipa
+      - $HOME/export/*.ipa
